@@ -62,9 +62,11 @@ export interface Settings {
     clearanceMm: number;
   };
   base: {
-    /** Height of the chamfered plinth under the model. */
-    heightMm: number;
-    /** Text on the front, left and right faces of the plinth. */
+    /** Thickness of the flat plate under the model. */
+    plateMm: number;
+    /** How far the plate reaches beyond the model on every side (room for labels). */
+    rimMm: number;
+    /** Text lying flat on the rim: in front of the model and either side. */
     title: string;
     left: string;
     right: string;
@@ -101,7 +103,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   shape: 'rectangle',
   route: { style: 'raised', widthMm: 1.2, raiseMm: 1.2, clearanceMm: 0.15 },
-  base: { heightMm: 10, title: '', left: '', right: '' },
+  base: { plateMm: 3, rimMm: 12, title: '', left: '', right: '' },
   slots: { terrain: 1, buildings: 2, roads: 3, water: 4, parks: 5, marker: 6, route: 7, base: 8, labels: 9 },
   colors: {
     terrain: '#e9e4d8',
@@ -180,7 +182,7 @@ export interface Report {
     grooveDepthMm: number;
     stages: number;
   };
-  base: null | { heightMm: number; labels: number };
+  base: null | { plateMm: number; rimMm: number; labels: number };
 }
 
 export interface ModelResult {

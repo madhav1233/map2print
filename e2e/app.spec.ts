@@ -198,7 +198,7 @@ test('GPX route keepsake: upload two days, generate, switch to insert, download'
   console.log(checks);
   expect(checks).toContain('Route traced as a 1.2 mm ridge across 2 stages');
   expect(checks).toContain('clipped to an octagon');
-  expect(checks).toContain('3 raised labels on the base');
+  expect(checks).toContain('3 labels lying flat on the rim');
   expect(await page.locator('#checks li.bad').count()).toBe(0);
   await page.waitForTimeout(600);
   await page.screenshot({ path: `${SHOTS}/07-route-raised.png` });

@@ -34,15 +34,15 @@ An optional **heart marker** can be dragged onto the map to mark a special place
 
 Add the GPX file from a race, or several files for a multi-day hike, and map2print prints the route on its terrain.
 
-![Route insert lifted out of its groove, on an octagonal base with raised labels](docs/route-insert.png)
+![Route insert lifted out of its groove, on a flat octagonal base plate with labels on the rim](docs/route-insert.png)
 
 - **Import.** Use *Add GPX files* or drop files on the map. Tracks and routes are both read, and stages are put in date order, so the files can be added in any order. Each day shows its distance and climb, and the route is drawn on the map with one colour per day.
 - **Framing.** The area fits itself around the route, so it stays inside the chosen shape: rectangle, octagon, hexagon or circle.
 - **Two route styles:**
   - *Raised ridge*: a ridge that follows the terrain, printed in place in its own colour.
   - *Slot-in insert*, like the printed keepsakes in the inspiration video: a groove is cut into the terrain, and the route is exported as a separate wall that prints standing up. Its top follows the elevation profile, and it presses into the groove with a set clearance (0.15 mm a side by default). The preview lifts the insert out so you can see both pieces. There's a separate *Download route insert (STL)*.
-- **Base and labels.** The model can stand on a chamfered base. Raised text goes on the front face and the faces either side. It fills in the trail name, total distance and dates (as local dates for the route's location), and you can edit all three.
-- **First-route preset.** Adding the first route sets up a keepsake: an octagon on a base with labels, olive terrain, blue water, a red route, a dark base and white text, on slots 1–5. Buildings and roads are off. Everything stays editable.
+- **Base plate and labels.** The model can stand on a thin, straight-sided plate (3 mm by default). The plate reaches a rim (12 mm by default) beyond the map on every side. Labels lie flat on that rim, in front of the model and on the faces either side, raised 0.6 mm (three 0.2 mm layers). The tops of the letters point at the model, so they read from outside. It fills in the trail name, total distance and dates (as local dates for the route's location), and you can edit all three. Everything is parallel to the bed, so there are no supports and few layers, and the label colour is only needed on the top three layers. On a circle, the straight labels are sized to stay on the curved rim.
+- **First-route preset.** Adding the first route sets up a keepsake: an octagon on a flat base plate with labels, olive terrain, blue water, a red route, a dark base and white text, on slots 1–5. Buildings and roads are off. Everything stays editable.
 - **Large areas.** Races and multi-day hikes often cover 10–100 km. Buildings and roads are only fetched up to 8 km, and water and parks up to 60 km. Beyond that the model is terrain and route, and sea comes from the elevation data. The upper limit is 200 km.
 
 Shapes, the groove, the insert and the base are built with [Manifold](https://github.com/elalish/manifold), loaded as WebAssembly only when needed, so every boolean result is guaranteed manifold. Labels use Barlow Condensed glyph outlines via opentype.js.

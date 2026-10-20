@@ -52,7 +52,7 @@
           </div>
           <p class="hint" id="route-empty">Add the GPX file from your race or hike to print the route on its terrain. Add several files for a multi-day trip. You can also drop them on the map.</p>
           <ol class="stages" id="stages" hidden></ol>
-          <p class="hint" id="route-preset-note" hidden>Set up as a race keepsake: octagon on a base, with the name, distance and date as labels. Change anything below.</p>
+          <p class="hint" id="route-preset-note" hidden>Set up as a race keepsake: an octagon on a flat base plate, with the name, distance and date lying flat on the rim. Change anything below.</p>
           <p class="route-total" id="route-total" hidden></p>
           <div id="route-options" hidden>
             <div class="fields">
@@ -124,24 +124,28 @@
 
         <section class="block" aria-labelledby="h-base">
           <h2 id="h-base">Base and labels</h2>
-          <label class="check"><input type="checkbox" id="base-on" /> Stand the model on a chamfered base</label>
+          <label class="check"><input type="checkbox" id="base-on" /> Stand the model on a flat base plate</label>
           <div id="base-options" hidden>
             <div class="fields base-fields">
               <label class="field">
-                <span>Base height</span>
-                <span class="input-unit"><input type="number" id="base-height" min="4" max="30" step="1" value="10" /><em>mm</em></span>
+                <span>Plate thickness</span>
+                <span class="input-unit"><input type="number" id="plate-mm" min="1" max="10" step="0.2" value="3" /><em>mm</em></span>
               </label>
-              <label class="check field-wide"><input type="checkbox" id="labels-on" /> Raised text on the front faces</label>
+              <label class="field">
+                <span>Rim around the model</span>
+                <span class="input-unit"><input type="number" id="rim-mm" min="0" max="40" step="1" value="12" /><em>mm</em></span>
+              </label>
+              <label class="check field-wide"><input type="checkbox" id="labels-on" /> Raised text lying flat on the rim</label>
               <label class="field field-wide label-text">
                 <span>Front</span>
                 <input type="text" id="label-title" maxlength="40" placeholder="Race or trail name" />
               </label>
               <label class="field label-text">
-                <span>Left face</span>
+                <span>Left side</span>
                 <input type="text" id="label-left" maxlength="20" placeholder="Distance" />
               </label>
               <label class="field label-text">
-                <span>Right face</span>
+                <span>Right side</span>
                 <input type="text" id="label-right" maxlength="26" placeholder="Date" />
               </label>
             </div>

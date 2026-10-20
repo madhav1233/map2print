@@ -7,7 +7,7 @@ import polygonClipping from 'polygon-clipping';
 import { coastlineWater } from './coastline';
 import { fieldRange, levelWater, makeGrid, parityMask, rasterizeLine, rasterizeRings, sampleField, type Grid } from './grid';
 import type { Manifold, ManifoldToplevel } from 'manifold-3d';
-import { buildPlinth, corridor, Geo, pointInPolygon, shapePolygon, simplifyLine, type Glyphs } from './memento';
+import { buildPlate, corridor, Geo, pointInPolygon, shapePolygon, simplifyLine, type Glyphs } from './memento';
 import { analyzeShell, cleanShell, mergeMeshes, meshBounds, type MeshData } from './mesh';
 import { parseOsm, type Features, type OsmJson, type Pt, type Ring } from './osm';
 import { Projector, sampleDem } from './projection';
@@ -471,18 +471,19 @@ function generateInner(input: GenerateInput, progress: ProgressFn, ext: Extras, 
     if (!routeInfo) warnings.push('The route lies outside the selected area, so it was left out.');
   }
 
-  // ---- plinth and labels ----
+  // ---- base plate and labels ----
   let baseInfo: Report['base'] = null;
   if (geo && s.include.base) {
     progress('Building the base', 0.9);
     const texts = s.include.labels ? s.base : null;
     if (texts && !ext.glyphs) warnings.push('The label font did not load, so the base has no text.');
-    const pl = buildPlinth(geo, s.shape, footprint, W, H, s.base.heightMm, texts, ext.glyphs ?? null);
+    const plate = Math.max(1, s.base.plateMm);
+    const pl = buildPlate(geo, s.shape, footprint, W, H, plate, s.base.rimMm, texts, ext.glyphs ?? null);
     warnings.push(...pl.warnings);
-    for (const p of parts) for (let i = 2; i < p.positions.length; i += 3) p.positions[i] += s.base.heightMm;
+    for (const p of parts) for (let i = 2; i < p.positions.length; i += 3) p.positions[i] += plate;
     part('base', 'Base', pl.base, 1, true);
     if (pl.labels) part('labels', 'Labels', pl.labels, pl.labelCount, true);
-    baseInfo = { heightMm: s.base.heightMm, labels: pl.labelCount };
+    baseInfo = { plateMm: plate, rimMm: s.base.rimMm, labels: pl.labelCount };
   }
 
   progress('Checking the model', 0.95);

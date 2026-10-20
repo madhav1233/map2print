@@ -72,7 +72,7 @@ describe('route keepsake pipeline', () => {
     ...DEFAULT_SETTINGS,
     cellMm: 0.8,
     include: { ...DEFAULT_SETTINGS.include, buildings: true, roads: true, base: true, labels: true },
-    base: { heightMm: 10, title: 'Test Trail', left: '27 km', right: '26–27 Jul 2026' },
+    base: { plateMm: 3, rimMm: 12, title: 'Test Trail', left: '27 km', right: '26–27 Jul 2026' },
     ...over,
   });
 
@@ -107,11 +107,31 @@ describe('route keepsake pipeline', () => {
       expect(insert.intersect(o).volume(), other).toBeLessThan(1e-3);
     }
 
-    // terrain sits on the plinth and stays inside the octagon
-    const t = r.parts.find((p) => p.id === 'terrain')!;
-    let zMin = Infinity;
-    for (let i = 2; i < t.positions.length; i += 3) zMin = Math.min(zMin, t.positions[i]);
-    expect(zMin).toBeCloseTo(10, 5);
+    // terrain sits on the 3 mm plate
+    const zRange = (id: string) => {
+      const p = r.parts.find((q) => q.id === id)!;
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = 2; i < p.positions.length; i += 3) {
+        lo = Math.min(lo, p.positions[i]);
+        hi = Math.max(hi, p.positions[i]);
+      }
+      return [lo, hi];
+    };
+    expect(zRange('terrain')[0]).toBeCloseTo(3, 5);
+    // the plate is flat and the labels lie flat on it: 0.6 mm proud of the top
+    expect(zRange('base')).toEqual([0, 3]);
+    const [lz0, lz1] = zRange('labels');
+    expect(lz0).toBeCloseTo(2.6, 4);
+    expect(lz1).toBeCloseTo(3.6, 4);
+    // labels sit on the rim, outside the model's footprint
+    const lab = r.parts.find((q) => q.id === 'labels')!;
+    const ter = r.parts.find((q) => q.id === 'terrain')!;
+    let tMinY = Infinity;
+    for (let i = 1; i < ter.positions.length; i += 3) tMinY = Math.min(tMinY, ter.positions[i]);
+    let lMinY = Infinity;
+    for (let i = 1; i < lab.positions.length; i += 3) lMinY = Math.min(lMinY, lab.positions[i]);
+    expect(lMinY).toBeLessThan(tMinY - 2);
 
     // exports
     const files = unzipSync(build3mf(r.parts, 'Test Trail'));
@@ -122,6 +142,35 @@ describe('route keepsake pipeline', () => {
     let insZ = Infinity;
     for (let i = 2; i < ins.positions.length; i += 3) insZ = Math.min(insZ, ins.positions[i]);
     expect(insZ).toBe(0);
+  });
+
+  it('circle base: straight labels kept inside the curved rim', () => {
+    const settings = base({ shape: 'circle', include: { ...DEFAULT_SETTINGS.include, buildings: false, roads: false, base: true, labels: true } });
+    const r = generateModel(
+      { bbox: { west: 115.85, south: -31.965, east: 115.875, north: -31.945 }, dem: syntheticDem(), osm: syntheticOsm(), settings, route: { stages } },
+      () => {},
+      { wasm, glyphs },
+    );
+    expect(r.report.base?.labels).toBe(3);
+    const plate = r.parts.find((p) => p.id === 'base')!;
+    const lab = r.parts.find((p) => p.id === 'labels')!;
+    // every label vertex lies within the plate's radius
+    let cx = 0;
+    let cy = 0;
+    let rMax = 0;
+    for (let i = 0; i < plate.positions.length; i += 3) {
+      cx = Math.max(cx, plate.positions[i]);
+      cy = Math.max(cy, plate.positions[i + 1]);
+    }
+    let minX = Infinity;
+    for (let i = 0; i < plate.positions.length; i += 3) minX = Math.min(minX, plate.positions[i]);
+    const R = (cx - minX) / 2;
+    const ccx = (cx + minX) / 2;
+    let minY = Infinity;
+    for (let i = 1; i < plate.positions.length; i += 3) minY = Math.min(minY, plate.positions[i]);
+    const ccy = (cy + minY) / 2;
+    for (let i = 0; i < lab.positions.length; i += 3) rMax = Math.max(rMax, Math.hypot(lab.positions[i] - ccx, lab.positions[i + 1] - ccy));
+    expect(rMax).toBeLessThan(R);
   });
 
   it('raised route on a plain rectangle needs no base', () => {

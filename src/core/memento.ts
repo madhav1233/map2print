@@ -277,43 +277,38 @@ export function glyphsFromFont(font: { getPath(text: string, x: number, y: numbe
   };
 }
 
-type V3 = [number, number, number];
-const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
-const mul = (a: V3, k: number): V3 => [a[0] * k, a[1] * k, a[2] * k];
-const len = (a: V3) => Math.hypot(a[0], a[1], a[2]);
-const norm = (a: V3): V3 => mul(a, 1 / (len(a) || 1));
-const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-
-export interface PlinthResult {
+export interface PlateResult {
   base: MeshData;
   labels: MeshData | null;
   labelCount: number;
   warnings: string[];
-  /** How far the plinth reaches beyond the footprint on each side. */
-  runMm: number;
 }
 
 /**
- * Chamfered plinth under the footprint (its top face is the footprint) with
- * raised text on the front face and the faces either side of it.
+ * Flat base plate under the model: the footprint grown by a rim of `rimMm`
+ * on every side, `plateMm` thick, straight-sided. Labels lie flat on the rim
+ * in front of the front face and the faces either side of it, raised a few
+ * layers, with the tops of the letters towards the model so they read from
+ * outside. Everything is parallel to the print bed: no supports, few layers,
+ * and the second colour only on the top layers.
  */
-export function buildPlinth(
+export function buildPlate(
   geo: Geo,
   shape: Shape,
   footprint: Pt[],
   W: number,
   H: number,
-  heightMm: number,
+  plateMm: number,
+  rimMm: number,
   texts: { title: string; left: string; right: string } | null,
   glyphs: Glyphs | null,
-): PlinthResult {
+): PlateResult {
   const warnings: string[] = [];
   const cx = W / 2;
   const cy = H / 2;
-  const run = Math.max(2, heightMm * 0.8);
+  const R = rimMm;
   const local = footprint.map(([x, y]) => [x - cx, y - cy] as Pt);
-  // inradius (x and y) so the chamfer is `run` wide on every face
+  // inradius per axis, so the rim is R wide measured square to every face
   let rx: number;
   let ry: number;
   if (shape === 'rectangle') {
@@ -323,72 +318,85 @@ export function buildPlinth(
     const h = Math.min(W, H) / 2;
     rx = ry = shape === 'hexagon' ? (h * Math.sqrt(3)) / 2 : h;
   }
-  const sx = (rx + run) / rx;
-  const sy = (ry + run) / ry;
-  const bottom = local.map(([x, y]) => [x * sx, y * sy] as Pt);
-  const frustum = geo.own(geo.section([bottom]).extrude(heightMm, 0, 0, [1 / sx, 1 / sy]));
-  const base = geo.own(frustum.translate([cx, cy, 0]));
+  const outline = local.map(([x, y]) => [x * ((rx + R) / rx), y * ((ry + R) / ry)] as Pt);
+  const slab = geo.own(geo.section([outline]).extrude(plateMm));
+  const base = geo.own(slab.translate([cx, cy, 0]));
 
   let labels: MeshData | null = null;
   let labelCount = 0;
   const wanted = texts && (texts.title.trim() || texts.left.trim() || texts.right.trim());
-  if (wanted && glyphs) {
+  if (wanted && glyphs && R >= 4) {
+    // anchors: outward direction n, inner edge distance r, usable width along the rim
+    type Anchor = { n: Pt; r: number; width: number; curved: boolean };
+    const anchors: Anchor[] = [];
     if (shape === 'circle') {
-      warnings.push('Labels need a base with flat faces; choose a rectangle, hexagon or octagon to add them.');
+      const r = rx;
+      for (const deg of [-90, -140, -40]) {
+        const a = (deg * Math.PI) / 180;
+        anchors.push({ n: [Math.cos(a), Math.sin(a)], r, width: Infinity, curved: true });
+      }
     } else {
-      const n = bottom.length;
-      const B = (k: number): V3 => [bottom[k % n][0] + cx, bottom[k % n][1] + cy, 0];
-      const T = (k: number): V3 => [local[k % n][0] + cx, local[k % n][1] + cy, heightMm];
-      const faces = Array.from({ length: n }, (_, k) => {
-        const bm = mul(add(B(k), B(k + 1)), 0.5);
-        const tm = mul(add(T(k), T(k + 1)), 0.5);
-        const e = norm(sub(B(k + 1), B(k)));
-        const u = norm(sub(tm, bm));
-        const nrm = norm(cross(e, u));
-        return {
-          center: mul(add(bm, tm), 0.5),
-          e,
-          u,
-          n: nrm,
-          slant: len(sub(tm, bm)),
-          topWidth: len(sub(T(k + 1), T(k))),
-        };
+      const n = local.length;
+      const faces = local.map((p, k) => {
+        const q = local[(k + 1) % n];
+        const ex = q[0] - p[0];
+        const ey = q[1] - p[1];
+        const l = Math.hypot(ex, ey);
+        const nx = ey / l;
+        const ny = -ex / l;
+        return { n: [nx, ny] as Pt, r: nx * p[0] + ny * p[1], width: l };
       });
       let front = 0;
       for (let k = 1; k < n; k++) if (faces[k].n[1] < faces[front].n[1]) front = k;
-      const plan: [number, string][] = [
-        [front, texts.title],
-        [(front - 1 + n) % n, texts.left],
-        [(front + 1) % n, texts.right],
-      ];
-      const pieces: Manifold[] = [];
-      const raise = 0.8;
-      const embed = 0.6;
-      for (const [k, raw] of plan) {
-        const text = raw.trim();
-        if (!text) continue;
-        const f = faces[k];
-        const g = glyphs.contours(text);
-        if (!g.contours.length) continue;
-        const gw = g.x1 - g.x0;
-        const gh = g.y1 - g.y0;
-        const size = Math.min((f.slant * 0.58) / gh, (f.topWidth * 0.86) / gw, 9 / gh);
-        if (size * gh < 2) {
-          warnings.push(`"${text}" doesn't fit on its face of the base at a printable size; shorten it or make the base taller.`);
-          continue;
-        }
-        const ox = (g.x0 + g.x1) / 2;
-        const oy = (g.y0 + g.y1) / 2;
-        const polys = g.contours.map((ring) => ring.map(([x, y]) => [(x - ox) * size, (y - oy) * size] as Pt));
-        const cs = geo.section(polys, 'NonZero');
-        const slab = geo.own(geo.own(cs.extrude(raise + embed)).translate([0, 0, -embed]));
-        const o = f.center;
-        const m: Mat4 = [f.e[0], f.e[1], f.e[2], 0, f.u[0], f.u[1], f.u[2], 0, f.n[0], f.n[1], f.n[2], 0, o[0], o[1], o[2], 1];
-        pieces.push(geo.own(slab.transform(m)));
-        labelCount++;
-      }
-      if (pieces.length) labels = geo.mesh(geo.own(geo.M.Manifold.union(pieces)));
+      for (const k of [front, (front - 1 + n) % n, (front + 1) % n]) anchors.push({ ...faces[k], curved: false });
     }
+    const plan: [Anchor, string][] = [
+      [anchors[0], texts.title],
+      [anchors[1], texts.left],
+      [anchors[2], texts.right],
+    ];
+    const pieces: Manifold[] = [];
+    const raise = 0.6; // three 0.2 mm layers
+    const embed = 0.4;
+    const margin = Math.min(1, R * 0.1);
+    for (const [a, raw] of plan) {
+      const text = raw.trim();
+      if (!text) continue;
+      const g = glyphs.contours(text);
+      if (!g.contours.length) continue;
+      const gw = g.x1 - g.x0;
+      const gh = g.y1 - g.y0;
+      const d = a.r + R / 2; // centre line of the rim
+      let size = Math.min(Math.min(R * 0.6, 10) / gh, (a.width * 0.88) / gw);
+      if (a.curved) {
+        // straight text on a curved rim: keep the outer corners on the plate
+        const outer = a.r + R - margin;
+        for (let i = 0; i < 60; i++) {
+          const hw = (size * gw) / 2;
+          const hh = (size * gh) / 2;
+          if (hw * hw + (d + hh) ** 2 <= outer * outer) break;
+          size *= 0.95;
+        }
+      }
+      if (size * gh < 2.5) {
+        warnings.push(`"${text}" doesn't fit on the rim at a printable size; shorten it or widen the rim.`);
+        continue;
+      }
+      const ox = (g.x0 + g.x1) / 2;
+      const oy = (g.y0 + g.y1) / 2;
+      const polys = g.contours.map((ring) => ring.map(([x, y]) => [(x - ox) * size, (y - oy) * size] as Pt));
+      const cs = geo.section(polys, 'NonZero');
+      const piece = geo.own(geo.own(cs.extrude(raise + embed)).translate([0, 0, -embed]));
+      // x along the rim (reads left to right from outside), y towards the model, z up
+      const e: Pt = [-a.n[1], a.n[0]];
+      const o: Pt = [cx + a.n[0] * d, cy + a.n[1] * d];
+      const m: Mat4 = [e[0], e[1], 0, 0, -a.n[0], -a.n[1], 0, 0, 0, 0, 1, 0, o[0], o[1], plateMm, 1];
+      pieces.push(geo.own(piece.transform(m)));
+      labelCount++;
+    }
+    if (pieces.length) labels = geo.mesh(geo.own(geo.M.Manifold.union(pieces)));
+  } else if (wanted && glyphs) {
+    warnings.push('The rim is too narrow for labels; make it at least 4 mm wide.');
   }
-  return { base: geo.mesh(base), labels, labelCount, warnings, runMm: run };
+  return { base: geo.mesh(base), labels, labelCount, warnings };
 }

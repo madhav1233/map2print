@@ -88,7 +88,8 @@ const routeWidthEl = $<HTMLInputElement>('route-width');
 const routeRaiseEl = $<HTMLInputElement>('route-raise');
 const routeClearEl = $<HTMLInputElement>('route-clearance');
 const baseOnEl = $<HTMLInputElement>('base-on');
-const baseHeightEl = $<HTMLInputElement>('base-height');
+const plateEl = $<HTMLInputElement>('plate-mm');
+const rimEl = $<HTMLInputElement>('rim-mm');
 const labelsOnEl = $<HTMLInputElement>('labels-on');
 const labelTitleEl = $<HTMLInputElement>('label-title');
 const labelLeftEl = $<HTMLInputElement>('label-left');
@@ -107,7 +108,8 @@ routeWidthEl.value = String(settings.route.widthMm);
 routeRaiseEl.value = String(settings.route.raiseMm);
 routeClearEl.value = String(settings.route.clearanceMm);
 baseOnEl.checked = settings.include.base;
-baseHeightEl.value = String(settings.base.heightMm);
+plateEl.value = String(settings.base.plateMm);
+rimEl.value = String(settings.base.rimMm);
 labelsOnEl.checked = settings.include.labels;
 labelTitleEl.value = settings.base.title;
 labelLeftEl.value = settings.base.left;
@@ -162,7 +164,8 @@ function readSettings(): Settings {
   s.include.base = baseOnEl.checked;
   s.include.labels = baseOnEl.checked && labelsOnEl.checked;
   s.base = {
-    heightMm: num(baseHeightEl, 4, 30, 10),
+    plateMm: num(plateEl, 1, 10, 3),
+    rimMm: num(rimEl, 0, 40, 12),
     title: labelTitleEl.value,
     left: labelLeftEl.value,
     right: labelRightEl.value,
@@ -268,7 +271,7 @@ legend.addEventListener('input', (e) => {
 });
 for (const el of [
   sizeEl, baseEl, exagEl, bscaleEl, detailEl, pathsEl, routeStyleEl, routeWidthEl, routeRaiseEl, routeClearEl,
-  baseOnEl, baseHeightEl, labelsOnEl, labelTitleEl, labelLeftEl, labelRightEl,
+  baseOnEl, plateEl, rimEl, labelsOnEl, labelTitleEl, labelLeftEl, labelRightEl,
 ]) {
   el.addEventListener('change', () => {
     syncLegend();
@@ -627,7 +630,12 @@ function showResult(parts: PartResult[], r: Report): void {
       ? ['ok', `Outward-facing normals with consistent winding on all ${fmt(r.shellsChecked)} shells`]
       : ['warn', `${fmt(r.shellsFailed)} of ${fmt(r.shellsChecked)} shells failed checks and were left out`],
   );
-  checks.push(['ok', r.base ? `Flat-bottomed ${r.base.heightMm} mm chamfered base, so no supports are needed` : `Flat ${r.baseMm} mm base, so no supports are needed`]);
+  checks.push([
+    'ok',
+    r.base
+      ? `Flat ${r.base.plateMm} mm base plate with a ${r.base.rimMm} mm rim, straight-sided and parallel to the bed, so no supports are needed`
+      : `Flat ${r.baseMm} mm base, so no supports are needed`,
+  ]);
   if (r.shape !== 'rectangle') checks.push(['ok', `Terrain and every layer clipped to ${r.shape === 'octagon' ? 'an octagon' : r.shape === 'hexagon' ? 'a hexagon' : 'a circle'}`]);
   if (r.route) {
     const days = r.route.stages > 1 ? ` across ${r.route.stages} stages` : '';
@@ -637,7 +645,8 @@ function showResult(parts: PartResult[], r: Report): void {
         : ['ok', `Route traced as a ${r.route.widthMm} mm ridge${days}, following the terrain and printed in its own colour`],
     );
   }
-  if (r.base?.labels) checks.push(['ok', `${r.base.labels} raised ${r.base.labels === 1 ? 'label' : 'labels'} on the base`]);
+  if (r.base?.labels)
+    checks.push(['ok', `${r.base.labels} ${r.base.labels === 1 ? 'label' : 'labels'} lying flat on the rim, raised 0.6 mm (three 0.2 mm layers) so the second colour is only on the top layers`]);
   if (has('buildings') || r.buildingsDropped)
     checks.push([
       'ok',
