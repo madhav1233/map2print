@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { unzipSync, strFromU8 } from 'fflate';
-import { analyzeShell, mergeMeshes } from '../src/core/mesh';
+import { analyzeShell, cleanShell, mergeMeshes } from '../src/core/mesh';
 import { makeGrid, rasterizeRings, levelWater, parityMask } from '../src/core/grid';
 import { extrudePolygon, maskSlab, roadRibbon, terrainSolid, heartRing } from '../src/core/solids';
 import { coastlineWater } from '../src/core/coastline';
@@ -42,6 +42,10 @@ describe('solids are watertight by construction', () => {
     expect(a.nonManifoldEdges).toBe(0);
     expect(a.inconsistentEdges).toBe(0);
     expect(a.volume).toBeGreaterThan(0);
+    // the pipeline's clean-up must not glue the pinch vertices back together
+    const cleaned = cleanShell(mesh, 1e-5, false);
+    expect(cleaned.analysis.watertight).toBe(true);
+    expect(cleanShell(mesh).analysis.watertight).toBe(false); // welding would break it
   });
 
   it('extruded polygon with a hole, either input winding', () => {

@@ -253,8 +253,13 @@ export interface CleanShellResult {
   analysis: ShellAnalysis;
 }
 
-export function cleanShell(mesh: MeshData, eps = 1e-5): CleanShellResult {
-  const w = weldVertices(mesh, eps);
+/**
+ * `weld: false` keeps coincident vertices apart: shells that duplicate a vertex
+ * on purpose (two cells touching only at a corner) would otherwise be glued
+ * back into a non-manifold pinch.
+ */
+export function cleanShell(mesh: MeshData, eps = 1e-5, weld = true): CleanShellResult {
+  const w = weld ? weldVertices(mesh, eps) : { mesh, merged: 0 };
   const d = removeDegenerate(w.mesh);
   let m = d.mesh;
   let analysis = analyzeShell(m);

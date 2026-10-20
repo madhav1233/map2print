@@ -62,8 +62,8 @@ interface Stats {
 }
 
 /** Clean a shell and fold its numbers into the running stats. Returns null if it is not watertight. */
-function accept(mesh: MeshData, stats: Stats): MeshData | null {
-  const r = cleanShell(mesh);
+function accept(mesh: MeshData, stats: Stats, weld = true): MeshData | null {
+  const r = cleanShell(mesh, 1e-5, weld);
   stats.shells++;
   stats.welded += r.welded;
   stats.degenerate += r.degenerate;
@@ -288,7 +288,7 @@ function generateInner(input: GenerateInput, progress: ProgressFn, ext: Extras, 
       (v) => zTerrain[v] + GEOM.waterRaiseMm,
       (v) => Math.max(0.2, zTerrain[v] - GEOM.embedMm),
     );
-    const m0 = accept(slab.mesh, stats);
+    const m0 = accept(slab.mesh, stats, false); // corner-touching cells keep separate vertices
     const m = m0 && shapeAndGroove(m0);
     if (m) part('water', 'Water', m, 1, false);
     else warnings.push('Water layer failed the manifold check and was left out.');
@@ -301,7 +301,7 @@ function generateInner(input: GenerateInput, progress: ProgressFn, ext: Extras, 
       (v) => zTerrain[v] + GEOM.parkRaiseMm,
       (v) => Math.max(0.2, zTerrain[v] - GEOM.embedMm),
     );
-    const m0 = accept(slab.mesh, stats);
+    const m0 = accept(slab.mesh, stats, false); // corner-touching cells keep separate vertices
     const m = m0 && shapeAndGroove(m0);
     if (m) part('parks', 'Parks & green', m, 1, false);
     else warnings.push('Park layer failed the manifold check and was left out.');
