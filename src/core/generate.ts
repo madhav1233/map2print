@@ -5,7 +5,7 @@
  */
 import polygonClipping from 'polygon-clipping';
 import { coastlineWater } from './coastline';
-import { fieldRange, levelWater, makeGrid, rasterizeLine, rasterizeRings, sampleField, type Grid } from './grid';
+import { fieldRange, levelWater, makeGrid, parityMask, rasterizeLine, rasterizeRings, sampleField, type Grid } from './grid';
 import { cleanShell, mergeMeshes, meshBounds, type MeshData } from './mesh';
 import { parseOsm, type Features, type OsmJson, type Pt, type Ring } from './osm';
 import { Projector, sampleDem } from './projection';
@@ -80,7 +80,8 @@ export function generateModel(input: GenerateInput, progress: ProgressFn = () =>
   progress('Reading OpenStreetMap features', 0.15);
   const features: Features = input.osm
     ? parseOsm(input.osm, proj, { includePaths: s.include.paths })
-    : { buildings: [], roads: [], waterAreas: [], waterLines: [], coastlines: [], parks: [] };
+    : { buildings: [], roads: [], waterAreas: [], waterPartials: [], waterLines: [], coastlines: [], parks: [], partialParksSkipped: 0 };
+  if (features.partialParksSkipped) warnings.push(`${features.partialParksSkipped} very large park or forest areas crossing the edge were left untinted.`);
 
   // ---- land cover masks ----
   progress('Mapping water and parks', 0.25);
@@ -88,6 +89,33 @@ export function generateModel(input: GenerateInput, progress: ProgressFn = () =>
   if (s.include.water) {
     for (const rings of features.waterAreas) rasterizeRings(g, rings, cover, WATER, true);
     for (const l of features.waterLines) rasterizeLine(g, l.pts, (l.widthM * proj.scale) / 2, cover, WATER);
+    // Giant water bodies delivered only near the window: the boundary fixes
+    // the fill up to inversion; water is the side that sits lower in the DEM.
+    const cellH = (c: number) => {
+      const i = c % g.nx;
+      const j = (c - i) / g.nx;
+      const v = j * sx + i;
+      return (h0[v] + h0[v + 1] + h0[v + sx] + h0[v + sx + 1]) / 4;
+    };
+    for (const lines of features.waterPartials) {
+      const a = parityMask(g, lines);
+      let nA = 0;
+      let sumA = 0;
+      let sumB = 0;
+      for (let c = 0; c < a.length; c++) {
+        const hc = cellH(c);
+        if (a[c]) {
+          nA++;
+          sumA += hc;
+        } else sumB += hc;
+      }
+      const nB = a.length - nA;
+      if (nA === 0 || nB === 0) continue; // boundary never crosses the window: ambiguous, skip
+      const meanA = sumA / nA;
+      const meanB = sumB / nB;
+      const invert = Math.abs(meanA - meanB) < 0.5 ? nA > nB : meanA > meanB;
+      for (let c = 0; c < a.length; c++) if (a[c] !== (invert ? 1 : 0)) cover[c] = WATER;
+    }
     if (features.coastlines.length) {
       try {
         const sea = coastlineWater(features.coastlines, W, H);

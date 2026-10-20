@@ -107,21 +107,43 @@ export function syntheticOsm(b: BBox = FIXTURE_BBOX): OsmJson {
     });
   }
 
-  // river: multipolygon whose outer ring is split into two ways, with an island
+  // River: a giant multipolygon delivered the way the app's Overpass query
+  // returns it: the relation record without geometry (`out body`) plus only
+  // the member ways that touch the window (`way(r.lc)(bbox); out geom`).
+  // Its end caps lie far outside the window and are not delivered.
   {
-    const northBank = [node(X(-0.2), Y(0.3)), node(X(0.3), Y(0.29)), node(X(0.6), Y(0.31)), node(X(1.2), Y(0.3))];
-    const southBank = [node(X(1.2), Y(0.2)), node(X(0.6), Y(0.2)), node(X(0.3), Y(0.21)), node(X(-0.2), Y(0.2))];
-    const w1 = way({}, [northBank[0], ...northBank.slice(1), southBank[0]]);
-    const w2 = way({}, [southBank[0], ...southBank.slice(1), northBank[0]].reverse()); // reversed on purpose
+    const northBank = way({}, [node(X(-0.2), Y(0.3)), node(X(0.3), Y(0.29)), node(X(0.6), Y(0.31)), node(X(1.2), Y(0.3))]);
+    const southBank = way({}, [node(X(1.2), Y(0.2)), node(X(0.6), Y(0.2)), node(X(0.3), Y(0.21)), node(X(-0.2), Y(0.2))].reverse());
     const island = way({}, [...rect(X(0.3), Y(0.235), X(0.36), Y(0.265)), node(X(0.3), Y(0.235))]);
+    els.push(northBank, southBank, island);
+    const capEast = nextId++;
+    const capWest = nextId++;
     els.push({
       type: 'relation',
       id: nextId++,
       tags: { type: 'multipolygon', natural: 'water', water: 'river', name: 'Test River' },
       members: [
-        { type: 'way', ref: w1.id, role: 'outer', geometry: w1.geometry },
-        { type: 'way', ref: w2.id, role: 'outer', geometry: w2.geometry },
-        { type: 'way', ref: island.id, role: 'inner', geometry: island.geometry },
+        { type: 'way', ref: northBank.id, role: 'outer' },
+        { type: 'way', ref: capEast, role: 'outer' },
+        { type: 'way', ref: southBank.id, role: 'outer' },
+        { type: 'way', ref: capWest, role: 'outer' },
+        { type: 'way', ref: island.id, role: 'inner' },
+      ],
+    });
+  }
+
+  // A small pond relation split into two ways, both delivered (complete).
+  {
+    const a = way({}, [node(X(0.5), Y(0.05)), node(X(0.56), Y(0.05)), node(X(0.56), Y(0.1))]);
+    const b = way({}, [node(X(0.56), Y(0.1)), node(X(0.5), Y(0.1)), node(X(0.5), Y(0.05))]);
+    els.push(a, b);
+    els.push({
+      type: 'relation',
+      id: nextId++,
+      tags: { type: 'multipolygon', natural: 'water', water: 'pond' },
+      members: [
+        { type: 'way', ref: a.id, role: 'outer' },
+        { type: 'way', ref: b.id, role: 'outer' },
       ],
     });
   }

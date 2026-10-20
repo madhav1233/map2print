@@ -258,3 +258,58 @@ export function levelWater(
   }
   return { heights: out, waterVertex, bodies };
 }
+
+/**
+ * Even-odd fill for a polygon of which only the boundary pieces near the
+ * window are known (the rest lies entirely outside it). Inside status is
+ * determined up to one bit: whether the south-west corner is inside. This
+ * returns the fill assuming the corner is outside; the caller decides whether
+ * to invert it.
+ *
+ * Walking up the left edge, the status flips at each boundary crossing of the
+ * edge; walking right along a row, it flips at each crossing of the row.
+ */
+export function parityMask(g: Grid, lines: Pt[][]): Uint8Array {
+  const { nx, ny, dx, dy, W, H } = g;
+  const mask = new Uint8Array(nx * ny);
+  const leftYs: number[] = [];
+  const rows: number[][] = Array.from({ length: ny }, () => []);
+  for (const l of lines) {
+    for (let k = 0; k + 1 < l.length; k++) {
+      const a = l[k];
+      const b = l[k + 1];
+      if (a[0] < 0 !== b[0] < 0) {
+        const y = a[1] + ((0 - a[0]) * (b[1] - a[1])) / (b[0] - a[0]);
+        if (y >= 0 && y <= H) leftYs.push(y);
+      }
+      if (a[1] === b[1]) continue;
+      const lo = Math.min(a[1], b[1]);
+      const hi = Math.max(a[1], b[1]);
+      const j0 = Math.max(0, Math.ceil(lo / dy - 0.5));
+      const j1 = Math.min(ny - 1, Math.ceil(hi / dy - 0.5) - 1);
+      for (let j = j0; j <= j1; j++) {
+        const yc = (j + 0.5) * dy;
+        const x = a[0] + ((yc - a[1]) * (b[0] - a[0])) / (b[1] - a[1]);
+        if (x >= 0 && x <= W) rows[j].push(x);
+      }
+    }
+  }
+  leftYs.sort((p, q) => p - q);
+  let lp = 0;
+  for (let j = 0; j < ny; j++) {
+    const yc = (j + 0.5) * dy;
+    while (lp < leftYs.length && leftYs[lp] < yc) lp++;
+    let s = lp & 1;
+    const xs = rows[j].sort((p, q) => p - q);
+    let xp = 0;
+    for (let i = 0; i < nx; i++) {
+      const xc = (i + 0.5) * dx;
+      while (xp < xs.length && xs[xp] < xc) {
+        s ^= 1;
+        xp++;
+      }
+      if (s) mask[j * nx + i] = 1;
+    }
+  }
+  return mask;
+}

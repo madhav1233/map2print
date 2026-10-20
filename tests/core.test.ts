@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { unzipSync, strFromU8 } from 'fflate';
 import { analyzeShell, mergeMeshes } from '../src/core/mesh';
-import { makeGrid, rasterizeRings, levelWater } from '../src/core/grid';
+import { makeGrid, rasterizeRings, levelWater, parityMask } from '../src/core/grid';
 import { extrudePolygon, maskSlab, roadRibbon, terrainSolid, heartRing } from '../src/core/solids';
 import { coastlineWater } from '../src/core/coastline';
 import { assembleRings, buildingHeight, parseLength } from '../src/core/osm';
@@ -101,6 +101,21 @@ describe('map data handling', () => {
     expect(m2[5 * 10 + 5]).toBe(0);
   });
 
+  it('fills a polygon known only near the window, up to inversion', () => {
+    // band 3 < y < 6 crossing the whole window; caps lie outside
+    const g = makeGrid(10, 10, 1);
+    const lines: [number, number][][] = [
+      [[-5, 6], [15, 6]],
+      [[15, 3], [-5, 3]],
+      [[4, 4], [6, 4], [6, 5], [4, 5], [4, 4]], // island
+    ];
+    const m = parityMask(g, lines);
+    expect(m[4 * 10 + 1]).toBe(1); // in the band
+    expect(m[4 * 10 + 5]).toBe(0); // the island
+    expect(m[1 * 10 + 1]).toBe(0); // south of the band
+    expect(m[8 * 10 + 8]).toBe(0); // north of the band
+  });
+
   it('levels a lake to its shoreline', () => {
     const g = makeGrid(20, 20, 1);
     const h = new Float64Array(21 * 21).map((_, v) => 10 + (v % 21) * 0.1);
@@ -134,6 +149,8 @@ describe('full pipeline on the synthetic city', () => {
     expect(r.roadSegments).toBeGreaterThan(20);
     expect(r.waterBodies).toBeGreaterThanOrEqual(2); // lake + river joined to the sea
     expect(r.elevationRange[0]).toBeGreaterThan(-8); // bathymetry was levelled away
+    expect(r.waterAreaPct).toBeGreaterThan(15); // river (partial relation) + sea + lake + pond
+    expect(r.waterAreaPct).toBeLessThan(45); // ...and the partial river was not inverted
     console.log(`pipeline ${elapsed} ms`, JSON.stringify({ ...r, warnings: r.warnings }, null, 0));
   });
 

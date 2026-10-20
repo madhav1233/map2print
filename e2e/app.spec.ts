@@ -45,6 +45,9 @@ async function mockNetwork(page: Page, calls: string[]) {
       });
     }
     if (url.includes('/api/interpreter')) {
+      // follow-up request for whole small relations: return nothing, so the partial path is used
+      if (decodeURIComponent(route.request().postData() ?? '').includes('rel(id:'))
+        return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"elements":[]}' });
       return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(syntheticOsm()) });
     }
     if (url.includes('nominatim')) {

@@ -327,7 +327,7 @@ $('generate').addEventListener('click', async () => {
     let osm = null;
     if (needOsm) {
       setProgress(0.32, 'Querying OpenStreetMap');
-      osm = await fetchOsm(bbox, (m) => setProgress(0.34, m), abort.signal);
+      osm = await fetchOsm(bbox, { includePaths: s.include.paths }, (m) => setProgress(0.34, m), abort.signal);
     }
     setProgress(0.55, 'Building the model');
     const res = await ask(

@@ -84,7 +84,7 @@ Pushing to `main` runs the tests and deploys `dist/` to GitHub Pages (`.github/w
 
 ## Limitations
 
-- The Overpass API is shared and rate-limited. Very dense or very large areas can time out. The app tries three public endpoints before giving up.
+- The Overpass API is shared and often busy. The app sends one lean query and only fetches the highway types it prints. Giant water and forest relations, like a whole river, are never downloaded: only their member ways near your area are, and the water side is picked from the elevation data. Busy servers get one polite retry, then the app falls back to the next public instance (overpass-api.de, VK Maps, private.coffee). Results are cached, so "Generate again" with new settings doesn't re-query.
 - Roofs are flat. `building:part` and roof shapes aren't modelled yet.
 - Water and park edges follow the terrain grid, so they're as sharp as the chosen detail (0.4–0.8 mm). That's about one nozzle width.
 - Bridges are draped at the water surface rather than lifted.

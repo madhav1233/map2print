@@ -50,10 +50,18 @@ export interface Features {
   buildings: BuildingFeature[];
   roads: RoadFeature[];
   waterAreas: RingSet[];
+  /**
+   * Water multipolygons only partly delivered (giant rivers / bays): just the
+   * member ways that touch the window, as open polylines. Filled by parity
+   * with the outside status resolved from the elevation data.
+   */
+  waterPartials: Pt[][][];
   waterLines: LineFeature[];
   /** Coastline chains (land on the left), projected. `closed` if the chain is a ring. */
   coastlines: { pts: Pt[]; closed: boolean }[];
   parks: RingSet[];
+  /** Park / green relations too large to resolve locally (skipped). */
+  partialParksSkipped: number;
 }
 
 const ROAD_WIDTHS: Record<string, number> = {
@@ -262,8 +270,26 @@ function isPark(t: Record<string, string>): boolean {
 
 export function parseOsm(json: OsmJson, proj: Projector, opts: { includePaths: boolean }): Features {
   const P = (g: GeomPt[]): Pt[] => g.map((p) => proj.toModel(p.lon, p.lat));
-  const f: Features = { buildings: [], roads: [], waterAreas: [], waterLines: [], coastlines: [], parks: [] };
+  const f: Features = {
+    buildings: [],
+    roads: [],
+    waterAreas: [],
+    waterPartials: [],
+    waterLines: [],
+    coastlines: [],
+    parks: [],
+    partialParksSkipped: 0,
+  };
   const coast: { nodes: number[]; geom: GeomPt[] }[] = [];
+  // Relations may arrive without member geometry (`out body`) next to their
+  // member ways (`out geom`), so index every way's geometry by id first.
+  const wayGeom = new Map<number, GeomPt[]>();
+  for (const el of json.elements ?? []) {
+    if (el.type === 'way') {
+      const g = cleanGeom(el.geometry);
+      if (g) wayGeom.set(el.id, g);
+    }
+  }
 
   for (const el of json.elements ?? []) {
     const t = el.tags ?? {};
@@ -305,11 +331,21 @@ export function parseOsm(json: OsmJson, proj: Projector, opts: { includePaths: b
       if (!water && !building && !park) continue;
       const outerWays: GeomPt[][] = [];
       const innerWays: GeomPt[][] = [];
+      let missing = 0;
       for (const m of el.members) {
         if (m.type !== 'way') continue;
-        const g = cleanGeom(m.geometry);
-        if (!g) continue;
+        const g = cleanGeom(m.geometry) ?? wayGeom.get(m.ref) ?? null;
+        if (!g) {
+          missing++;
+          continue;
+        }
         (m.role === 'inner' ? innerWays : outerWays).push(g);
+      }
+      if (missing > 0 && !building) {
+        // Only the members touching the window were delivered.
+        if (water && outerWays.length + innerWays.length) f.waterPartials.push([...outerWays, ...innerWays].map(P));
+        else if (park) f.partialParksSkipped++;
+        continue;
       }
       const outers = assembleRings(outerWays).map(P);
       const inners = assembleRings(innerWays).map(P);
