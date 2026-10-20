@@ -4,12 +4,14 @@ import '@fontsource/barlow/latin-600.css';
 import '@fontsource/barlow-condensed/latin-600.css';
 import '@fontsource/barlow-condensed/latin-700.css';
 import './style.css';
-import { MapView, MAX_SIDE_KM, boxAround, formatKm } from './mapView';
+import { MapView, MAX_SIDE_KM, DETAIL_MAX_KM, LANDCOVER_MAX_KM, boxAround, formatKm } from './mapView';
+import { formatDateRange, formatDistance, orderStages, parseGpx, summarize, type Stage } from './core/gpx';
+import { fitRouteBox } from './core/memento';
 import { Preview } from './preview';
 import { fetchDem, fetchOsm, searchPlaces, type Place } from './fetchers';
 import { bboxSizeMeters } from './core/projection';
-import { DEFAULT_SETTINGS, PART_ORDER, type BBox, type LonLat, type PartId, type PartResult, type Report, type Settings } from './core/types';
-import type { WorkerRequest, WorkerResponse } from './worker';
+import { DEFAULT_SETTINGS, PART_ORDER, type BBox, type LonLat, type PartId, type PartResult, type Report, type Settings, type Shape } from './core/types';
+import type { ExportFormat, WorkerRequest, WorkerResponse } from './worker';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -20,7 +22,13 @@ const LAYER_NAMES: Record<PartId, string> = {
   water: 'Water',
   parks: 'Parks & green space',
   marker: 'Heart marker',
+  route: 'Route',
+  base: 'Base',
+  labels: 'Labels',
 };
+/** Layers switched on elsewhere (route section, base section), not by a checkbox. */
+const MANAGED: PartId[] = ['route', 'base', 'labels'];
+const STAGE_COLORS = ['#d8322b', '#2f6e9e', '#7a4a22', '#3e7b3a', '#8a3fa0', '#c77700', '#1b8a8a'];
 
 // ---------- persisted settings ----------
 const STORE_KEY = 'map2print:v1';
@@ -53,6 +61,9 @@ if (saved.settings) {
   settings.include = { ...DEFAULT_SETTINGS.include, ...saved.settings.include };
   settings.slots = { ...DEFAULT_SETTINGS.slots, ...saved.settings.slots };
   settings.colors = { ...DEFAULT_SETTINGS.colors, ...saved.settings.colors };
+  settings.route = { ...DEFAULT_SETTINGS.route, ...saved.settings.route };
+  settings.base = { ...DEFAULT_SETTINGS.base, ...saved.settings.base };
+  settings.shape = saved.settings.shape ?? DEFAULT_SETTINGS.shape;
 }
 let placeName = saved.place ?? 'Lower Manhattan';
 let marker: LonLat | null = saved.marker ?? null;
@@ -71,6 +82,17 @@ const bscaleEl = $<HTMLInputElement>('bscale');
 const detailEl = $<HTMLSelectElement>('detail');
 const pathsEl = $<HTMLInputElement>('paths');
 const squareEl = $<HTMLInputElement>('square');
+const shapeEl = $<HTMLSelectElement>('shape');
+const routeStyleEl = $<HTMLSelectElement>('route-style');
+const routeWidthEl = $<HTMLInputElement>('route-width');
+const routeRaiseEl = $<HTMLInputElement>('route-raise');
+const routeClearEl = $<HTMLInputElement>('route-clearance');
+const baseOnEl = $<HTMLInputElement>('base-on');
+const baseHeightEl = $<HTMLInputElement>('base-height');
+const labelsOnEl = $<HTMLInputElement>('labels-on');
+const labelTitleEl = $<HTMLInputElement>('label-title');
+const labelLeftEl = $<HTMLInputElement>('label-left');
+const labelRightEl = $<HTMLInputElement>('label-right');
 
 sizeEl.value = String(settings.sizeMm);
 baseEl.value = String(settings.baseMm);
@@ -79,14 +101,30 @@ bscaleEl.value = String(settings.buildingScale);
 detailEl.value = String(settings.cellMm);
 if (![...detailEl.options].some((o) => o.value === detailEl.value)) detailEl.value = '0.5';
 pathsEl.checked = settings.include.paths;
+shapeEl.value = settings.shape;
+routeStyleEl.value = settings.route.style;
+routeWidthEl.value = String(settings.route.widthMm);
+routeRaiseEl.value = String(settings.route.raiseMm);
+routeClearEl.value = String(settings.route.clearanceMm);
+baseOnEl.checked = settings.include.base;
+baseHeightEl.value = String(settings.base.heightMm);
+labelsOnEl.checked = settings.include.labels;
+labelTitleEl.value = settings.base.title;
+labelLeftEl.value = settings.base.left;
+labelRightEl.value = settings.base.right;
 
 const legend = $('legend');
 for (const id of PART_ORDER) {
   const li = document.createElement('li');
-  const on = id === 'terrain' || settings.include[id as keyof Settings['include']];
+  const managed = MANAGED.includes(id);
+  const on = id === 'terrain' || managed || settings.include[id as keyof Settings['include']];
+  li.dataset.part = id;
+  const toggle = managed
+    ? `<span class="legend-name">${LAYER_NAMES[id]}</span>`
+    : `<label class="${on ? '' : 'is-off'}"><input type="checkbox" data-layer="${id}" ${on ? 'checked' : ''} ${id === 'terrain' ? 'disabled' : ''}> ${LAYER_NAMES[id]}</label>`;
   li.innerHTML = `
     <span class="swatch"><input type="color" aria-label="${LAYER_NAMES[id]} colour" data-color="${id}" value="${settings.colors[id]}"></span>
-    <label class="${on ? '' : 'is-off'}"><input type="checkbox" data-layer="${id}" ${on ? 'checked' : ''} ${id === 'terrain' ? 'disabled' : ''}> ${LAYER_NAMES[id]}</label>
+    ${toggle}
     <select data-slot="${id}" aria-label="${LAYER_NAMES[id]} filament slot">${Array.from({ length: 8 }, (_, k) => `<option value="${k + 1}" ${settings.slots[id] === k + 1 ? 'selected' : ''}>${k + 1}</option>`).join('')}</select>`;
   legend.appendChild(li);
 }
@@ -113,7 +151,38 @@ function readSettings(): Settings {
   legend.querySelectorAll<HTMLInputElement>('input[data-color]').forEach((el) => {
     s.colors[el.dataset.color as PartId] = el.value;
   });
+  s.shape = shapeEl.value as Shape;
+  s.route = {
+    style: routeStyleEl.value === 'insert' ? 'insert' : 'raised',
+    widthMm: num(routeWidthEl, 0.6, 4, 1.2),
+    raiseMm: num(routeRaiseEl, 0.4, 5, 1.2),
+    clearanceMm: num(routeClearEl, 0.05, 0.5, 0.15),
+  };
+  s.include.route = stages.length > 0;
+  s.include.base = baseOnEl.checked;
+  s.include.labels = baseOnEl.checked && labelsOnEl.checked;
+  s.base = {
+    heightMm: num(baseHeightEl, 4, 30, 10),
+    title: labelTitleEl.value,
+    left: labelLeftEl.value,
+    right: labelRightEl.value,
+  };
   return s;
+}
+
+/** Show only the legend rows that will actually be printed. */
+function syncLegend(): void {
+  const show: Partial<Record<PartId, boolean>> = {
+    route: stages.length > 0,
+    base: baseOnEl.checked,
+    labels: baseOnEl.checked && labelsOnEl.checked,
+  };
+  legend.querySelectorAll<HTMLLIElement>('li[data-part]').forEach((li) => {
+    const id = li.dataset.part as PartId;
+    if (id in show) li.hidden = !show[id];
+  });
+  $('base-options').hidden = !baseOnEl.checked;
+  $('clearance-field').hidden = routeStyleEl.value !== 'insert';
 }
 
 // ---------- area readout ----------
@@ -127,9 +196,14 @@ function updateArea(b: BBox | null): void {
     return;
   }
   const { width, height } = bboxSizeMeters(b);
-  const over = Math.max(width, height) > MAX_SIDE_KM * 1000;
+  const side = Math.max(width, height) / 1000;
+  const over = side > MAX_SIDE_KM;
+  let note = '';
+  if (over) note = `<span class="over">Keep each side under ${MAX_SIDE_KM} km.</span>`;
+  else if (side > LANDCOVER_MAX_KM) note = `<span class="note-line">At this size the model is terrain and route only. Sea comes from the elevation data.</span>`;
+  else if (side > DETAIL_MAX_KM) note = `<span class="note-line">Buildings and roads are left out above ${DETAIL_MAX_KM} km. Terrain, water and route are kept.</span>`;
   el.className = 'area-readout';
-  el.innerHTML = `${formatKm(width)} × ${formatKm(height)}${over ? `<span class="over">Keep each side under ${MAX_SIDE_KM} km so OpenStreetMap can return the data.</span>` : ''}`;
+  el.innerHTML = `${formatKm(width)} × ${formatKm(height)}${note}`;
   gen.disabled = over || busy;
   $('stage-hint').hidden = true;
 }
@@ -192,12 +266,165 @@ legend.addEventListener('input', (e) => {
   const t = e.target as HTMLInputElement;
   if (t.dataset.color) preview.setColor(t.dataset.color as PartId, t.value);
 });
-for (const el of [sizeEl, baseEl, exagEl, bscaleEl, detailEl, pathsEl]) {
+for (const el of [
+  sizeEl, baseEl, exagEl, bscaleEl, detailEl, pathsEl, routeStyleEl, routeWidthEl, routeRaiseEl, routeClearEl,
+  baseOnEl, baseHeightEl, labelsOnEl, labelTitleEl, labelLeftEl, labelRightEl,
+]) {
   el.addEventListener('change', () => {
+    syncLegend();
     markStale();
     save();
   });
 }
+shapeEl.addEventListener('change', () => {
+  mapView.setShape(shapeEl.value as Shape);
+  if (stages.length) fitToRoute();
+  markStale();
+  save();
+});
+
+// ---------- GPX route ----------
+let stages: (Stage & { color: string })[] = [];
+let labelsEdited = !!(settings.base.title || settings.base.left || settings.base.right);
+for (const el of [labelTitleEl, labelLeftEl, labelRightEl]) el.addEventListener('input', () => (labelsEdited = true));
+
+function routePoints() {
+  return stages.flatMap((st) => st.points);
+}
+
+function fitToRoute(): void {
+  if (!stages.length) return;
+  mapView.setBBox(fitRouteBox(routePoints(), shapeEl.value as Shape, 0.1));
+  mapView.fitSelection();
+}
+
+function renderStages(): void {
+  const list = $<HTMLOListElement>('stages');
+  const fmtDate = (st: Stage, off: number) => formatDateRange(st.start, st.end, off);
+  const sum = summarize(stages);
+  list.innerHTML = '';
+  stages.forEach((st, i) => {
+    const li = document.createElement('li');
+    const date = fmtDate(st, sum.utcOffsetH);
+    const bits = [date, formatDistance(st.distanceM), st.ascentM ? `+${Math.round(st.ascentM).toLocaleString('en-US')} m` : ''].filter(Boolean);
+    li.innerHTML = `<span class="stage-dot" style="background:${st.color}"></span>
+      <span class="stage-text"><span class="stage-name"></span><span class="stage-meta">${bits.join(', ')}</span></span>
+      <button class="stage-remove" type="button" aria-label="Remove ${st.name.replace(/"/g, '')}">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>`;
+    li.querySelector('.stage-name')!.textContent = stages.length > 1 ? `Day ${i + 1}: ${st.name}` : st.name;
+    li.querySelector('button')!.addEventListener('click', () => {
+      stages.splice(i, 1);
+      routeChanged(false);
+    });
+    list.appendChild(li);
+  });
+  list.hidden = !stages.length;
+  $('route-empty').hidden = stages.length > 0;
+  $('route-options').hidden = !stages.length;
+  const total = $('route-total');
+  total.hidden = !stages.length;
+  if (stages.length) {
+    const days = sum.days > 1 ? ` over ${sum.days} days` : '';
+    total.textContent = `${formatDistance(sum.distanceM)}${days}, +${Math.round(sum.ascentM).toLocaleString('en-US')} m of climbing`;
+  }
+}
+
+function routeChanged(refit: boolean): void {
+  stages.forEach((st, i) => (st.color = STAGE_COLORS[i % STAGE_COLORS.length]));
+  renderStages();
+  mapView.showRoute(stages.map((st) => ({ color: st.color, pts: st.points.map((p) => [p.lat, p.lon] as [number, number]) })));
+  if (stages.length && !labelsEdited) {
+    const sum = summarize(stages);
+    labelTitleEl.value = sum.title.slice(0, 40);
+    labelLeftEl.value = formatDistance(sum.distanceM);
+    labelRightEl.value = formatDateRange(sum.start, sum.end, sum.utcOffsetH);
+  }
+  if (refit) fitToRoute();
+  syncLegend();
+  markStale();
+  save();
+}
+
+/** First route of the session: set the model up like a race keepsake. */
+function applyKeepsakePreset(): void {
+  shapeEl.value = 'octagon';
+  mapView.setShape('octagon');
+  baseOnEl.checked = true;
+  labelsOnEl.checked = true;
+  const set = (id: PartId, on: boolean | null, slot: number, color: string) => {
+    const cb = legend.querySelector<HTMLInputElement>(`input[data-layer="${id}"]`);
+    if (cb && on !== null) {
+      cb.checked = on;
+      cb.closest('label')!.classList.toggle('is-off', !on);
+    }
+    legend.querySelector<HTMLSelectElement>(`select[data-slot="${id}"]`)!.value = String(slot);
+    legend.querySelector<HTMLInputElement>(`input[data-color="${id}"]`)!.value = color;
+  };
+  set('terrain', null, 1, '#6f7f4a');
+  set('water', true, 2, '#3f86c8');
+  set('route', null, 3, '#d8322b');
+  set('base', null, 4, '#2b2f33');
+  set('labels', null, 5, '#f4f4f0');
+  set('parks', false, 6, settings.colors.parks);
+  set('buildings', false, 6, settings.colors.buildings);
+  set('roads', false, 6, settings.colors.roads);
+  $('route-preset-note').hidden = false;
+}
+
+async function addGpxFiles(files: File[]): Promise<void> {
+  const gpx = files.filter((f) => /\.gpx$/i.test(f.name) || f.type.includes('gpx'));
+  if (!gpx.length) {
+    showError('Those files are not GPX. Export the activity from Strava, Garmin Connect or your watch app as GPX and add it again.');
+    return;
+  }
+  const errors: string[] = [];
+  const firstRoute = stages.length === 0;
+  for (const f of gpx) {
+    try {
+      for (const st of parseGpx(await f.text(), f.name)) {
+        const dup = stages.some((o) => o.points.length === st.points.length && o.points[0].lat === st.points[0].lat && o.points[0].lon === st.points[0].lon);
+        if (!dup) stages.push({ ...st, color: '' });
+      }
+    } catch (e) {
+      errors.push((e as Error).message);
+    }
+  }
+  stages = orderStages(stages) as typeof stages;
+  showError(errors.length ? errors.join(' ') : null);
+  if (!stages.length) return;
+  if (firstRoute) applyKeepsakePreset();
+  placeName = summarize(stages).title;
+  showView('map');
+  routeChanged(true);
+}
+
+$<HTMLInputElement>('gpx-input').addEventListener('change', async (e) => {
+  const input = e.target as HTMLInputElement;
+  await addGpxFiles([...(input.files ?? [])]);
+  input.value = '';
+});
+$('fit-route').addEventListener('click', () => {
+  showView('map');
+  fitToRoute();
+});
+$('clear-route').addEventListener('click', () => {
+  stages = [];
+  routeChanged(false);
+});
+const stageEl = document.querySelector<HTMLElement>('.stage')!;
+stageEl.addEventListener('dragover', (e) => {
+  if (![...(e.dataTransfer?.types ?? [])].includes('Files')) return;
+  e.preventDefault();
+  stageEl.classList.add('is-dropping');
+});
+stageEl.addEventListener('dragleave', (e) => {
+  if (e.target === stageEl || !stageEl.contains(e.relatedTarget as Node)) stageEl.classList.remove('is-dropping');
+});
+stageEl.addEventListener('drop', (e) => {
+  e.preventDefault();
+  stageEl.classList.remove('is-dropping');
+  addGpxFiles([...(e.dataTransfer?.files ?? [])]);
+});
 
 // ---------- search ----------
 const results = $<HTMLUListElement>('search-results');
@@ -323,15 +550,31 @@ $('generate').addEventListener('click', async () => {
     const cellM = s.cellMm / mmPerM;
     setProgress(0.02, 'Downloading elevation tiles');
     const dem = await fetchDem(bbox, cellM, (d, t) => setProgress(0.02 + 0.28 * (d / t), `Downloading elevation tiles (${d} of ${t})`), abort.signal);
-    const needOsm = s.include.buildings || s.include.roads || s.include.water || s.include.parks;
+    // what OpenStreetMap can sensibly deliver at this size
+    const sideKm = Math.max(width, height) / 1000;
+    if (sideKm > DETAIL_MAX_KM) {
+      s.include.buildings = false;
+      s.include.roads = false;
+    }
+    const landcover = sideKm <= LANDCOVER_MAX_KM && (s.include.water || s.include.parks);
+    if (!landcover) s.include.parks = false;
     let osm = null;
-    if (needOsm) {
+    if (s.include.buildings || s.include.roads || landcover) {
       setProgress(0.32, 'Querying OpenStreetMap');
-      osm = await fetchOsm(bbox, { includePaths: s.include.paths }, (m) => setProgress(0.34, m), abort.signal);
+      osm = await fetchOsm(
+        bbox,
+        { buildings: s.include.buildings, roads: s.include.roads, paths: s.include.paths, landcover },
+        (m) => setProgress(0.34, m),
+        abort.signal,
+      );
     }
     setProgress(0.55, 'Building the model');
+    const route = stages.length ? { stages: stages.map((st) => st.points.map((p) => [p.lon, p.lat] as [number, number])) } : null;
     const res = await ask(
-      { type: 'generate', input: { bbox, dem, osm, settings: s, marker: s.include.marker ? marker : null } },
+      {
+        type: 'generate',
+        input: { bbox, dem, osm, settings: s, marker: s.include.marker ? marker : null, route, seaFromDem: !landcover && s.include.water },
+      },
       (stage, f) => setProgress(0.55 + 0.45 * (f ?? 0), stage),
     );
     if (res.type === 'error') throw new Error(res.message);
@@ -366,7 +609,7 @@ function showResult(parts: PartResult[], r: Report): void {
   lastReport = r;
   preview.setParts(
     parts.map((p) => ({ id: p.id, color: readSettings().colors[p.id], positions: p.positions, indices: p.indices })),
-    r.sizeMm,
+    { liftRoute: r.route?.style === 'insert' ? 14 : 0 },
   );
   $('tab-3d').removeAttribute('disabled');
   showView('3d');
@@ -384,7 +627,17 @@ function showResult(parts: PartResult[], r: Report): void {
       ? ['ok', `Outward-facing normals with consistent winding on all ${fmt(r.shellsChecked)} shells`]
       : ['warn', `${fmt(r.shellsFailed)} of ${fmt(r.shellsChecked)} shells failed checks and were left out`],
   );
-  checks.push(['ok', `Flat ${r.baseMm} mm base, so no supports are needed`]);
+  checks.push(['ok', r.base ? `Flat-bottomed ${r.base.heightMm} mm chamfered base, so no supports are needed` : `Flat ${r.baseMm} mm base, so no supports are needed`]);
+  if (r.shape !== 'rectangle') checks.push(['ok', `Terrain and every layer clipped to ${r.shape === 'octagon' ? 'an octagon' : r.shape === 'hexagon' ? 'a hexagon' : 'a circle'}`]);
+  if (r.route) {
+    const days = r.route.stages > 1 ? ` across ${r.route.stages} stages` : '';
+    checks.push(
+      r.route.style === 'insert'
+        ? ['ok', `Route insert ${r.route.widthMm} mm wide${days}, with a ${r.route.clearanceMm} mm gap each side in a groove at least ${r.route.grooveDepthMm.toFixed(1)} mm deep. Print it standing up, then press it in.`]
+        : ['ok', `Route traced as a ${r.route.widthMm} mm ridge${days}, following the terrain and printed in its own colour`],
+    );
+  }
+  if (r.base?.labels) checks.push(['ok', `${r.base.labels} raised ${r.base.labels === 1 ? 'label' : 'labels'} on the base`]);
   if (has('buildings') || r.buildingsDropped)
     checks.push([
       'ok',
@@ -424,6 +677,13 @@ function showResult(parts: PartResult[], r: Report): void {
     ['Road segments', fmt(r.roadSegments)],
     ['Elevation range', `${Math.round(r.elevationRange[0])} to ${Math.round(r.elevationRange[1])} m`],
   ];
+  if (stages.length) {
+    const sum = summarize(stages);
+    rows.splice(2, 0, ['Route', `${formatDistance(sum.distanceM)}, +${Math.round(sum.ascentM).toLocaleString('en-US')} m`]);
+  }
+  if (!r.buildings) rows.splice(rows.findIndex((x) => x[0] === 'Buildings'), 1);
+  if (!r.roadSegments) rows.splice(rows.findIndex((x) => x[0] === 'Road segments'), 1);
+  $('dl-route').hidden = r.route?.style !== 'insert';
   $('stats').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
   $('results').hidden = false;
 }
@@ -433,7 +693,7 @@ function slug(s: string): string {
   return s.toLowerCase().normalize('NFKD').replace(/[^\w]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'area';
 }
 
-async function download(format: 'stl' | '3mf' | 'zip', btn: HTMLButtonElement): Promise<void> {
+async function download(format: ExportFormat, btn: HTMLButtonElement): Promise<void> {
   if (!lastReport || busy) return;
   const s = readSettings();
   const base = `map2print-${slug(placeName)}-${Math.round(s.sizeMm)}mm`;
@@ -444,10 +704,11 @@ async function download(format: 'stl' | '3mf' | 'zip', btn: HTMLButtonElement): 
     if (res.type === 'error') throw new Error(res.message);
     if (res.type !== 'file') return;
     const type = format === '3mf' ? 'model/3mf' : format === 'zip' ? 'application/zip' : 'model/stl';
+    const suffix = format === 'zip' ? '-parts.zip' : format === 'route' ? '-route-insert.stl' : '.' + format;
     const url = URL.createObjectURL(new Blob([res.data as Uint8Array<ArrayBuffer>], { type }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${base}${format === 'zip' ? '-parts.zip' : '.' + format}`;
+    a.download = `${base}${suffix}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -461,10 +722,17 @@ async function download(format: 'stl' | '3mf' | 'zip', btn: HTMLButtonElement): 
 $('dl-3mf').addEventListener('click', (e) => download('3mf', e.currentTarget as HTMLButtonElement));
 $('dl-stl').addEventListener('click', (e) => download('stl', e.currentTarget as HTMLButtonElement));
 $('dl-zip').addEventListener('click', (e) => download('zip', e.currentTarget as HTMLButtonElement));
+$('dl-route').addEventListener('click', (e) => download('route', e.currentTarget as HTMLButtonElement));
 
 // ---------- start ----------
 const startBBox = saved.bbox ?? DEFAULT_BBOX;
 mapView.setBBox(startBBox);
-mapView.fitSelection();
+mapView.fitSelection(false);
+mapView.setShape(settings.shape);
 syncMarker();
+syncLegend();
+renderStages();
 updateArea(startBBox);
+
+// handle for debugging and end-to-end tests
+(window as unknown as { map2print: unknown }).map2print = { mapView };

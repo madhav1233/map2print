@@ -23,9 +23,12 @@ export interface Dem {
   data: Float32Array; // metres
 }
 
-export type PartId = 'terrain' | 'buildings' | 'roads' | 'water' | 'parks' | 'marker';
+export type PartId = 'terrain' | 'buildings' | 'roads' | 'water' | 'parks' | 'marker' | 'route' | 'base' | 'labels';
 
-export const PART_ORDER: PartId[] = ['terrain', 'buildings', 'roads', 'water', 'parks', 'marker'];
+export const PART_ORDER: PartId[] = ['terrain', 'buildings', 'roads', 'water', 'parks', 'marker', 'route', 'base', 'labels'];
+
+export type Shape = 'rectangle' | 'octagon' | 'hexagon' | 'circle';
+export type RouteStyle = 'raised' | 'insert';
 
 export interface Settings {
   /** Length of the longest side of the model, mm. */
@@ -43,6 +46,28 @@ export interface Settings {
     water: boolean;
     parks: boolean;
     marker: boolean;
+    route: boolean;
+    base: boolean;
+    labels: boolean;
+  };
+  /** Footprint of the model. Non-rectangular shapes are inscribed in the selection. */
+  shape: Shape;
+  route: {
+    /** Raised ridge printed in place, or a separate wall that slots into a groove. */
+    style: RouteStyle;
+    widthMm: number;
+    /** Height of the route above the ground. */
+    raiseMm: number;
+    /** Gap on each side between the insert and its groove. */
+    clearanceMm: number;
+  };
+  base: {
+    /** Height of the chamfered plinth under the model. */
+    heightMm: number;
+    /** Text on the front, left and right faces of the plinth. */
+    title: string;
+    left: string;
+    right: string;
   };
   /** Filament / AMS slot (1-based) per part. */
   slots: Record<PartId, number>;
@@ -63,8 +88,21 @@ export const DEFAULT_SETTINGS: Settings = {
   cellMm: 0.5,
   terrainExaggeration: 1.5,
   buildingScale: 1,
-  include: { buildings: true, roads: true, paths: false, water: true, parks: true, marker: false },
-  slots: { terrain: 1, buildings: 2, roads: 3, water: 4, parks: 5, marker: 6 },
+  include: {
+    buildings: true,
+    roads: true,
+    paths: false,
+    water: true,
+    parks: true,
+    marker: false,
+    route: true,
+    base: false,
+    labels: false,
+  },
+  shape: 'rectangle',
+  route: { style: 'raised', widthMm: 1.2, raiseMm: 1.2, clearanceMm: 0.15 },
+  base: { heightMm: 10, title: '', left: '', right: '' },
+  slots: { terrain: 1, buildings: 2, roads: 3, water: 4, parks: 5, marker: 6, route: 7, base: 8, labels: 9 },
   colors: {
     terrain: '#e9e4d8',
     buildings: '#f7f6f2',
@@ -72,6 +110,9 @@ export const DEFAULT_SETTINGS: Settings = {
     water: '#4a86b8',
     parks: '#7aa35a',
     marker: '#d23a3a',
+    route: '#d8322b',
+    base: '#2b2f33',
+    labels: '#f4f4f0',
   },
   minBuildingMm: 0.6,
   minFootprintMm2: 0.5,
@@ -130,6 +171,16 @@ export interface Report {
   realSizeM: [number, number];
   demZoom: number;
   warnings: string[];
+  shape: Shape;
+  route: null | {
+    style: RouteStyle;
+    lengthMm: number;
+    widthMm: number;
+    clearanceMm: number;
+    grooveDepthMm: number;
+    stages: number;
+  };
+  base: null | { heightMm: number; labels: number };
 }
 
 export interface ModelResult {

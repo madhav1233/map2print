@@ -75,6 +75,17 @@ export function singleStl(parts: PartResult[]): Uint8Array {
   return toBinaryStl(mergeMeshes(parts.filter((p) => p.inStl)), 'map2print single-colour model');
 }
 
+/** One part on its own, dropped onto z = 0 so it prints standing on the bed. */
+export function partStl(parts: PartResult[], id: string): Uint8Array {
+  const p = parts.find((q) => q.id === id);
+  if (!p) throw new Error(`There is no ${id} part in this model.`);
+  let zMin = Infinity;
+  for (let i = 2; i < p.positions.length; i += 3) zMin = Math.min(zMin, p.positions[i]);
+  const positions = p.positions.slice();
+  for (let i = 2; i < positions.length; i += 3) positions[i] -= zMin;
+  return toBinaryStl({ positions, indices: p.indices }, `map2print ${p.name}`);
+}
+
 export function separateStlZip(parts: PartResult[], baseName: string): Uint8Array {
   const files: Record<string, Uint8Array> = {};
   for (const p of parts) {
@@ -148,12 +159,16 @@ export function build3mf(parts: PartResult[], title: string): Uint8Array {
   const PNS = 'http://schemas.microsoft.com/3dmanufacturing/production/2015/06';
   const assemblyId = used.length + 1;
   const subPath = '/3D/Objects/object_1.model';
-  let maxX = 0;
-  let maxY = 0;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
   for (const p of used) {
     for (let i = 0; i < p.positions.length; i += 3) {
-      if (p.positions[i] > maxX) maxX = p.positions[i];
-      if (p.positions[i + 1] > maxY) maxY = p.positions[i + 1];
+      minX = Math.min(minX, p.positions[i]);
+      maxX = Math.max(maxX, p.positions[i]);
+      minY = Math.min(minY, p.positions[i + 1]);
+      maxY = Math.max(maxY, p.positions[i + 1]);
     }
   }
 
@@ -185,7 +200,7 @@ export function build3mf(parts: PartResult[], title: string): Uint8Array {
     '</components></object>',
     '</resources>',
     // centre on a 256 mm plate (X1/P1/A1); use Arrange in the slicer for smaller beds
-    `<build p:UUID="${uuid(999)}"><item objectid="${assemblyId}" p:UUID="${uuid(998)}" transform="1 0 0 0 1 0 0 0 1 ${n4(128 - maxX / 2)} ${n4(128 - maxY / 2)} 0" printable="1"/></build>`,
+    `<build p:UUID="${uuid(999)}"><item objectid="${assemblyId}" p:UUID="${uuid(998)}" transform="1 0 0 0 1 0 0 0 1 ${n4(128 - (minX + maxX) / 2)} ${n4(128 - (minY + maxY) / 2)} 0" printable="1"/></build>`,
     '</model>',
   ];
 

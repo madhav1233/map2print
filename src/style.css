@@ -24,6 +24,11 @@
   box-sizing: border-box;
 }
 
+/* components set display; keep the hidden attribute authoritative */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -803,4 +808,158 @@ select {
   .progress-fill {
     transition: none;
   }
+}
+
+/* ---------- route section ---------- */
+
+.file-link {
+  cursor: pointer;
+}
+
+.hint {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+#route-preset-note {
+  margin-top: 10px;
+  padding-left: 10px;
+  border-left: 3px solid var(--contour);
+}
+
+.stages {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.stages[hidden],
+#route-options[hidden],
+#base-options[hidden],
+.route-total[hidden],
+.hint[hidden] {
+  display: none;
+}
+
+.stages li {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) 28px;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--rule);
+}
+
+.stage-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid var(--ink);
+}
+
+.stage-text {
+  display: grid;
+  min-width: 0;
+}
+
+.stage-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage-meta {
+  font-size: 13px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.stage-remove {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  cursor: pointer;
+}
+
+.stage-remove:hover {
+  background: var(--paper-2);
+}
+
+.stage-remove svg {
+  width: 14px;
+  height: 14px;
+  stroke: var(--ink-2);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.route-total {
+  margin: 10px 0 12px;
+  font: 600 20px/1.2 var(--font-cond);
+  font-variant-numeric: tabular-nums;
+}
+
+.route-actions {
+  display: flex;
+  gap: 18px;
+  margin-top: 12px;
+}
+
+.area-readout .note-line {
+  display: block;
+  font: 400 13.5px/1.4 var(--font);
+  color: var(--ink-2);
+}
+
+.base-fields {
+  margin-top: 12px;
+}
+
+.label-text input {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: #fff;
+  padding: 6px 8px;
+  color: var(--ink);
+  min-width: 0;
+}
+
+.label-text input:focus {
+  outline: none;
+  border-color: var(--ink);
+}
+
+.legend li[hidden] {
+  display: none;
+}
+
+.legend-name {
+  font-size: 15px;
+  padding-left: 24px;
+}
+
+.stage.is-dropping::after {
+  content: 'Drop GPX files to add them to the route';
+  position: absolute;
+  inset: 12px;
+  z-index: 1100;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--ink);
+  border-radius: var(--radius-m);
+  background: rgb(247 248 244 / 0.86);
+  font: 600 22px var(--font-cond);
+  pointer-events: none;
+}
+
+.dl[hidden] {
+  display: none;
 }

@@ -96,18 +96,31 @@ const PATH_KINDS = 'footway|path|cycleway|bridleway|steps|track';
  * the relation records plus the member ways that touch the window (giant
  * rivers and forests are never downloaded whole).
  */
-export function overpassQuery(b: BBox, includePaths = false): string {
+export interface OsmLayers {
+  buildings: boolean;
+  roads: boolean;
+  paths: boolean;
+  /** Water, coastline and parks. */
+  landcover: boolean;
+}
+
+export function overpassQuery(b: BBox, layers: OsmLayers): string {
   const bb = `${b.south.toFixed(6)},${b.west.toFixed(6)},${b.north.toFixed(6)},${b.east.toFixed(6)}`;
-  const roads = includePaths ? `${ROAD_KINDS}|${PATH_KINDS}` : ROAD_KINDS;
-  return `[out:json][timeout:90];
-(
+  const parts: string[] = ['[out:json][timeout:90];'];
+  if (layers.buildings) {
+    parts.push(`(
   way["building"](${bb});
   relation["building"]["type"="multipolygon"](${bb});
 );
-out geom qt;
-way["highway"~"^(${roads})$"](${bb});
-out geom qt;
-(
+out geom qt;`);
+  }
+  if (layers.roads) {
+    const roads = layers.paths ? `${ROAD_KINDS}|${PATH_KINDS}` : ROAD_KINDS;
+    parts.push(`way["highway"~"^(${roads})$"](${bb});
+out geom qt;`);
+  }
+  if (layers.landcover) {
+    parts.push(`(
   way["natural"~"^(water|coastline|wood|scrub|grassland|heath)$"](${bb});
   way["waterway"~"^(riverbank|dock|river|canal)$"](${bb});
   way["landuse"~"^(reservoir|basin|grass|forest|meadow|recreation_ground|cemetery|village_green|allotments|orchard|vineyard)$"](${bb});
@@ -122,7 +135,9 @@ out geom qt;
 )->.lc;
 .lc out body qt;
 way(r.lc)(${bb});
-out geom qt;`;
+out geom qt;`);
+  }
+  return parts.join('\n');
 }
 
 const RETRYABLE = new Set([429, 502, 503, 504]);
@@ -187,11 +202,11 @@ const osmCache = new Map<string, OsmJson>();
 
 export async function fetchOsm(
   bbox: BBox,
-  opts: { includePaths: boolean },
+  layers: OsmLayers,
   onStatus: (msg: string) => void,
   signal?: AbortSignal,
 ): Promise<OsmJson> {
-  const query = overpassQuery(bbox, opts.includePaths);
+  const query = overpassQuery(bbox, layers);
   const cached = osmCache.get(query);
   if (cached) return cached;
   const json = await overpass(query, onStatus, signal);

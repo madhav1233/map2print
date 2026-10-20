@@ -5,9 +5,15 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { bboxSizeMeters, metersPerDegree } from './core/projection';
-import type { BBox, LonLat } from './core/types';
+import { unitShape } from './core/memento';
+import type { BBox, LonLat, Shape } from './core/types';
 
-export const MAX_SIDE_KM = 8;
+/** Largest area the app will model (terrain and route). */
+export const MAX_SIDE_KM = 200;
+/** Buildings and roads are only fetched up to this size. */
+export const DETAIL_MAX_KM = 8;
+/** Water and parks come from OpenStreetMap up to this size, beyond it from elevation. */
+export const LANDCOVER_MAX_KM = 60;
 
 export function formatKm(m: number): string {
   return m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`;
@@ -20,6 +26,9 @@ export class MapView {
   private corners: L.Marker[] = [];
   private mover: L.Marker | null = null;
   private pin: L.Marker | null = null;
+  private routeLayer: L.LayerGroup | null = null;
+  private shapeOutline: L.Polygon | null = null;
+  private shape: Shape = 'rectangle';
   private drawing = false;
   private start: L.LatLng | null = null;
   private bbox: BBox | null = null;
@@ -173,10 +182,52 @@ export class MapView {
       this.label.setLatLng(top);
       this.label.setIcon(labelIcon);
     }
+    this.drawShape();
     if (final) {
       this.placeHandles();
       this.onChange(b);
     }
+  }
+
+  setShape(shape: Shape): void {
+    this.shape = shape;
+    this.drawShape();
+  }
+
+  /** Outline of a non-rectangular footprint, inscribed in the selection like the model. */
+  private drawShape(): void {
+    const b = this.bbox;
+    if (!b || this.shape === 'rectangle') {
+      this.shapeOutline?.remove();
+      this.shapeOutline = null;
+      return;
+    }
+    const mpd = metersPerDegree((b.south + b.north) / 2);
+    const { width, height } = bboxSizeMeters(b);
+    const h = Math.min(width, height) / 2;
+    const c = { lon: (b.west + b.east) / 2, lat: (b.south + b.north) / 2 };
+    const pts = unitShape(this.shape).map(([x, y]) => L.latLng(c.lat + (y * h) / mpd.lat, c.lon + (x * h) / mpd.lon));
+    if (!this.shapeOutline) {
+      this.shapeOutline = L.polygon(pts, { color: '#1f2a33', weight: 2, fill: false, interactive: false }).addTo(this.map);
+    } else this.shapeOutline.setLatLngs(pts);
+  }
+
+  /** Draw GPX stages; each stage gets its own colour, with start and finish dots. */
+  showRoute(stages: { color: string; pts: [number, number][] }[]): void {
+    this.routeLayer?.remove();
+    this.routeLayer = null;
+    if (!stages.length) return;
+    const g = L.layerGroup();
+    for (const st of stages) {
+      L.polyline(st.pts, { color: '#f7f8f4', weight: 7, opacity: 0.9, interactive: false }).addTo(g);
+      L.polyline(st.pts, { color: st.color, weight: 3.5, interactive: false }).addTo(g);
+    }
+    const first = stages[0].pts[0];
+    const lastStage = stages[stages.length - 1].pts;
+    const last = lastStage[lastStage.length - 1];
+    L.circleMarker(first, { radius: 6, color: '#1f2a33', weight: 2, fillColor: '#3e7b3a', fillOpacity: 1, interactive: false }).addTo(g);
+    L.circleMarker(last, { radius: 6, color: '#1f2a33', weight: 2, fillColor: '#f7f8f4', fillOpacity: 1, interactive: false }).addTo(g);
+    this.routeLayer = g.addTo(this.map);
   }
 
   private placeHandles(): void {
@@ -235,10 +286,15 @@ export class MapView {
     if (moveMover) this.mover?.setLatLng([(b.south + b.north) / 2, (b.west + b.east) / 2]);
   }
 
-  fitSelection(): void {
+  fitSelection(animate = true): void {
     if (!this.bbox) return;
-    const b = this.bbox;
-    this.map.fitBounds(L.latLngBounds([b.south, b.west], [b.north, b.east]), { padding: [60, 60] });
+    const go = () => {
+      const b = this.bbox!;
+      this.map.fitBounds(L.latLngBounds([b.south, b.west], [b.north, b.east]), { padding: [60, 60], animate });
+    };
+    // Leaflet ignores a new view while a zoom animation runs, so wait for it.
+    if ((this.map as unknown as { _animatingZoom?: boolean })._animatingZoom) this.map.once('zoomend', go);
+    else go();
   }
 
   showPin(p: LonLat | null): void {

@@ -1,30 +1,59 @@
 /// <reference lib="webworker" />
-import { generateModel, type GenerateInput } from './core/generate';
-import { build3mf, separateStlZip, singleStl } from './core/export';
+import { generateModel, needsGeometryEngine, type Extras, type GenerateInput } from './core/generate';
+import { build3mf, partStl, separateStlZip, singleStl } from './core/export';
+import { glyphsFromFont } from './core/memento';
+import ManifoldModule from 'manifold-3d';
+import wasmUrl from 'manifold-3d/manifold.wasm?url';
+import fontUrl from '@fontsource/barlow-condensed/files/barlow-condensed-latin-700-normal.woff?url';
+import { parse as parseFont } from 'opentype.js';
 import type { PartId, PartResult } from './core/types';
 
 export type WorkerRequest = { id: number } & (
   | { type: 'generate'; input: GenerateInput }
-  | { type: 'export'; format: 'stl' | '3mf' | 'zip'; title: string; baseName: string; slots: Partial<Record<PartId, number>> }
+  | { type: 'export'; format: ExportFormat; title: string; baseName: string; slots: Partial<Record<PartId, number>> }
 );
 
 export type WorkerResponse = { id: number } & (
   | { type: 'progress'; stage: string; fraction?: number }
   | { type: 'result'; parts: PartResult[]; report: import('./core/types').Report }
-  | { type: 'file'; format: 'stl' | '3mf' | 'zip'; data: Uint8Array }
+  | { type: 'file'; format: ExportFormat; data: Uint8Array }
   | { type: 'error'; message: string }
 );
 
+export type ExportFormat = 'stl' | '3mf' | 'zip' | 'route';
+
 let lastParts: PartResult[] = [];
+
+// Geometry engine (WASM) and label font load on first use only.
+let extras: Promise<Extras> | null = null;
+function loadExtras(): Promise<Extras> {
+  extras ??= Promise.all([
+    ManifoldModule({ locateFile: () => wasmUrl }).then((w) => {
+      w.setup();
+      return w;
+    }),
+    fetch(fontUrl)
+      .then((r) => r.arrayBuffer())
+      .then((b) => glyphsFromFont(parseFont(b)))
+      .catch(() => undefined),
+  ]).then(([wasm, glyphs]) => ({ wasm, glyphs }));
+  extras.catch(() => (extras = null));
+  return extras;
+}
 
 const post = (msg: WorkerResponse, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(msg, transfer);
 
-self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
+self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
   const msg = ev.data;
   const id = msg.id;
   try {
     if (msg.type === 'generate') {
-      const result = generateModel(msg.input, (stage, fraction) => post({ id, type: 'progress', stage, fraction }));
+      let ext: Extras = {};
+      if (needsGeometryEngine(msg.input)) {
+        post({ id, type: 'progress', stage: 'Loading the geometry engine', fraction: 0 });
+        ext = await loadExtras();
+      }
+      const result = generateModel(msg.input, (stage, fraction) => post({ id, type: 'progress', stage, fraction }), ext);
       lastParts = result.parts;
       // send copies so the worker keeps its own for exports
       const parts = result.parts.map((p) => ({ ...p, positions: p.positions.slice(), indices: p.indices.slice() }));
@@ -40,7 +69,9 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
           ? singleStl(parts)
           : msg.format === '3mf'
             ? build3mf(parts, msg.title)
-            : separateStlZip(parts, msg.baseName);
+            : msg.format === 'route'
+              ? partStl(parts, 'route')
+              : separateStlZip(parts, msg.baseName);
       post({ id, type: 'file', format: msg.format, data }, [data.buffer]);
     }
   } catch (e) {

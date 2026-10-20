@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { strFromU8, unzipSync } from 'fflate';
 import { FIXTURE_BBOX, syntheticOsm, terrariumTileRgba } from '../tests/fixtures/synthetic';
 import { parseBinaryStl } from '../src/core/export';
+import { hikeGpx } from '../tests/fixtures/gpx';
 
 const SHOTS = process.env.SHOTS_DIR ?? 'test-results';
 
@@ -166,4 +167,62 @@ test('mobile layout', async ({ browser }) => {
   expect(overflow).toBeLessThanOrEqual(0);
   await page.screenshot({ path: `${SHOTS}/05-mobile.png`, fullPage: true });
   await ctx.close();
+});
+
+test('GPX route keepsake: upload two days, generate, switch to insert, download', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await mockNetwork(page, []);
+  await page.goto('/');
+  await expect(page.locator('#area-readout')).toContainText('km');
+
+  // add day 2 first: stages must be re-ordered by date
+  await page.setInputFiles('#gpx-input', [
+    { name: 'day-2.gpx', mimeType: 'application/gpx+xml', buffer: Buffer.from(hikeGpx(2)) },
+    { name: 'day-1.gpx', mimeType: 'application/gpx+xml', buffer: Buffer.from(hikeGpx(1)) },
+  ]);
+  await expect(page.locator('#stages li')).toHaveCount(2);
+  await expect(page.locator('#stages li').first()).toContainText('Day 1: Test Trail Day 1');
+  await expect(page.locator('#route-total')).toContainText('over 2 days');
+  await expect(page.locator('#shape')).toHaveValue('octagon');
+  await expect(page.locator('#base-on')).toBeChecked();
+  await expect(page.locator('#label-title')).toHaveValue('Test Trail');
+  await expect(page.locator('#label-right')).toHaveValue('26–27 Jul 2026');
+  await expect(page.locator('li[data-part="route"]')).toBeVisible();
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: `${SHOTS}/06-route-map.png` });
+
+  await page.click('#generate');
+  await expect(page.locator('#results')).toBeVisible({ timeout: 120000 });
+  let checks = await page.locator('#checks').innerText();
+  console.log(checks);
+  expect(checks).toContain('Route traced as a 1.2 mm ridge across 2 stages');
+  expect(checks).toContain('clipped to an octagon');
+  expect(checks).toContain('3 raised labels on the base');
+  expect(await page.locator('#checks li.bad').count()).toBe(0);
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: `${SHOTS}/07-route-raised.png` });
+
+  // slot-in insert
+  await page.selectOption('#route-style', 'insert');
+  await expect(page.locator('#clearance-field')).toBeVisible();
+  await page.click('#generate');
+  await expect(page.locator('#checks')).toContainText('Route insert 1.2 mm wide', { timeout: 120000 });
+  checks = await page.locator('#checks').innerText();
+  console.log(checks);
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: `${SHOTS}/08-route-insert.png` });
+  await page.locator('#results').scrollIntoViewIfNeeded();
+  await page.locator('#results').screenshot({ path: `${SHOTS}/09-route-results.png` });
+
+  const [insDl] = await Promise.all([page.waitForEvent('download'), page.click('#dl-route')]);
+  expect(insDl.suggestedFilename()).toBe('map2print-test-trail-180mm-route-insert.stl');
+  const ins = parseBinaryStl(new Uint8Array(readFileSync((await insDl.path())!)));
+  expect(ins.triangles).toBeGreaterThan(1000);
+
+  const [mfDl] = await Promise.all([page.waitForEvent('download'), page.click('#dl-3mf')]);
+  const files = unzipSync(new Uint8Array(readFileSync((await mfDl.path())!)));
+  const cfg = strFromU8(files['Metadata/model_settings.config']);
+  for (const name of ['Terrain', 'Water', 'Route insert', 'Base', 'Labels']) expect(cfg).toContain(`value="${name}"`);
+  expect(errors).toEqual([]);
 });

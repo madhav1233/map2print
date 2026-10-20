@@ -44,6 +44,45 @@
           <label class="check"><input type="checkbox" id="square" /> Keep it square</label>
         </section>
 
+        <section class="block" aria-labelledby="h-route">
+          <div class="block-head">
+            <h2 id="h-route">Route</h2>
+            <label class="link file-link" for="gpx-input">Add GPX files</label>
+            <input type="file" id="gpx-input" accept=".gpx,application/gpx+xml" multiple class="visually-hidden" />
+          </div>
+          <p class="hint" id="route-empty">Add the GPX file from your race or hike to print the route on its terrain. Add several files for a multi-day trip. You can also drop them on the map.</p>
+          <ol class="stages" id="stages" hidden></ol>
+          <p class="hint" id="route-preset-note" hidden>Set up as a race keepsake: octagon on a base, with the name, distance and date as labels. Change anything below.</p>
+          <p class="route-total" id="route-total" hidden></p>
+          <div id="route-options" hidden>
+            <div class="fields">
+              <label class="field field-wide">
+                <span>Route style</span>
+                <select id="route-style">
+                  <option value="raised">Raised ridge, printed in place</option>
+                  <option value="insert">Slot-in insert, printed separately</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Route width</span>
+                <span class="input-unit"><input type="number" id="route-width" min="0.6" max="4" step="0.1" value="1.2" /><em>mm</em></span>
+              </label>
+              <label class="field">
+                <span>Height above ground</span>
+                <span class="input-unit"><input type="number" id="route-raise" min="0.4" max="5" step="0.2" value="1.2" /><em>mm</em></span>
+              </label>
+              <label class="field" id="clearance-field" hidden>
+                <span>Insert clearance</span>
+                <span class="input-unit"><input type="number" id="route-clearance" min="0.05" max="0.5" step="0.05" value="0.15" /><em>mm</em></span>
+              </label>
+            </div>
+            <div class="route-actions">
+              <button class="link" id="fit-route" type="button">Fit area to route</button>
+              <button class="link" id="clear-route" type="button">Remove route</button>
+            </div>
+          </div>
+        </section>
+
         <section class="block" aria-labelledby="h-model">
           <h2 id="h-model">Model</h2>
           <div class="fields">
@@ -63,7 +102,16 @@
               <span>Building height</span>
               <span class="input-unit"><input type="number" id="bscale" min="0.5" max="5" step="0.25" value="1" /><em>times</em></span>
             </label>
-            <label class="field field-wide">
+            <label class="field">
+              <span>Shape</span>
+              <select id="shape">
+                <option value="rectangle">Rectangle</option>
+                <option value="octagon">Octagon</option>
+                <option value="hexagon">Hexagon</option>
+                <option value="circle">Circle</option>
+              </select>
+            </label>
+            <label class="field">
               <span>Detail</span>
               <select id="detail">
                 <option value="0.4">Fine (0.4 mm grid)</option>
@@ -71,6 +119,32 @@
                 <option value="0.8">Draft (0.8 mm grid)</option>
               </select>
             </label>
+          </div>
+        </section>
+
+        <section class="block" aria-labelledby="h-base">
+          <h2 id="h-base">Base and labels</h2>
+          <label class="check"><input type="checkbox" id="base-on" /> Stand the model on a chamfered base</label>
+          <div id="base-options" hidden>
+            <div class="fields base-fields">
+              <label class="field">
+                <span>Base height</span>
+                <span class="input-unit"><input type="number" id="base-height" min="4" max="30" step="1" value="10" /><em>mm</em></span>
+              </label>
+              <label class="check field-wide"><input type="checkbox" id="labels-on" /> Raised text on the front faces</label>
+              <label class="field field-wide label-text">
+                <span>Front</span>
+                <input type="text" id="label-title" maxlength="40" placeholder="Race or trail name" />
+              </label>
+              <label class="field label-text">
+                <span>Left face</span>
+                <input type="text" id="label-left" maxlength="20" placeholder="Distance" />
+              </label>
+              <label class="field label-text">
+                <span>Right face</span>
+                <input type="text" id="label-right" maxlength="26" placeholder="Date" />
+              </label>
+            </div>
           </div>
         </section>
 
@@ -97,9 +171,10 @@
           <div class="downloads">
             <button class="dl dl-3mf" id="dl-3mf" type="button">Download 3MF <span>multi-colour, one part per slot</span></button>
             <button class="dl" id="dl-stl" type="button">Download STL <span>single watertight model</span></button>
+            <button class="dl" id="dl-route" type="button" hidden>Download route insert (STL) <span>print it standing, then press it into the groove</span></button>
             <button class="link" id="dl-zip" type="button">Download each layer as a separate STL (.zip)</button>
           </div>
-          <p class="note">Open the 3MF in Bambu Studio or OrcaSlicer: terrain, buildings, roads, water and parks arrive as parts of one object, already assigned to their filament slots.</p>
+          <p class="note">Open the 3MF in Bambu Studio or OrcaSlicer: every layer arrives as a part of one object, already assigned to its filament slot.</p>
         </section>
 
         <footer class="credits">

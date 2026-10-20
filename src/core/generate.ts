@@ -6,7 +6,9 @@
 import polygonClipping from 'polygon-clipping';
 import { coastlineWater } from './coastline';
 import { fieldRange, levelWater, makeGrid, parityMask, rasterizeLine, rasterizeRings, sampleField, type Grid } from './grid';
-import { cleanShell, mergeMeshes, meshBounds, type MeshData } from './mesh';
+import type { Manifold, ManifoldToplevel } from 'manifold-3d';
+import { buildPlinth, corridor, Geo, pointInPolygon, shapePolygon, simplifyLine, type Glyphs } from './memento';
+import { analyzeShell, cleanShell, mergeMeshes, meshBounds, type MeshData } from './mesh';
 import { parseOsm, type Features, type OsmJson, type Pt, type Ring } from './osm';
 import { Projector, sampleDem } from './projection';
 import { cleanRing, extrudePolygon, heartRing, maskSlab, ringArea, roadRibbon, terrainSolid } from './solids';
@@ -28,6 +30,22 @@ export interface GenerateInput {
   osm: OsmJson | null;
   settings: Settings;
   marker?: LonLat | null;
+  /** GPX route: one polyline of [lon, lat] per stage. */
+  route?: { stages: [number, number][][] } | null;
+  /** No OSM land cover was fetched (area too large): treat ground at or below sea level as sea. */
+  seaFromDem?: boolean;
+}
+
+/** Engines needed for shapes, routes and the plinth (loaded asynchronously by the caller). */
+export interface Extras {
+  wasm?: ManifoldToplevel;
+  glyphs?: Glyphs;
+}
+
+/** Does this input need the Manifold geometry engine? */
+export function needsGeometryEngine(input: Pick<GenerateInput, 'settings' | 'route'>): boolean {
+  const s = input.settings;
+  return s.shape !== 'rectangle' || s.include.base || (s.include.route && !!input.route?.stages.some((l) => l.length > 1));
 }
 
 export type ProgressFn = (stage: string, fraction?: number) => void;
@@ -57,7 +75,20 @@ function accept(mesh: MeshData, stats: Stats): MeshData | null {
   return r.mesh;
 }
 
-export function generateModel(input: GenerateInput, progress: ProgressFn = () => {}): ModelResult {
+export function generateModel(input: GenerateInput, progress: ProgressFn = () => {}, ext: Extras = {}): ModelResult {
+  let geo: Geo | null = null;
+  if (needsGeometryEngine(input)) {
+    if (!ext.wasm) throw new Error('The geometry engine is not loaded.');
+    geo = new Geo(ext.wasm);
+  }
+  try {
+    return generateInner(input, progress, ext, geo);
+  } finally {
+    geo?.dispose();
+  }
+}
+
+function generateInner(input: GenerateInput, progress: ProgressFn, ext: Extras, geo: Geo | null): ModelResult {
   const { bbox, dem, settings: s } = input;
   const warnings: string[] = [];
   const proj = new Projector(bbox, s.sizeMm);
@@ -125,6 +156,14 @@ export function generateModel(input: GenerateInput, progress: ProgressFn = () =>
       }
     }
   }
+  if (s.include.water && !input.osm && input.seaFromDem) {
+    for (let c = 0; c < cover.length; c++) {
+      const i = c % g.nx;
+      const j = (c - i) / g.nx;
+      const v = j * sx + i;
+      if (Math.max(h0[v], h0[v + 1], h0[v + sx], h0[v + sx + 1]) <= 0) cover[c] = WATER;
+    }
+  }
   if (s.include.parks) for (const rings of features.parks) rasterizeRings(g, rings, cover, PARK, false);
 
   let waterCells = 0;
@@ -155,10 +194,67 @@ export function generateModel(input: GenerateInput, progress: ProgressFn = () =>
     zTerrain[v] = zSurface[v] - (lv.waterVertex[v] ? depress : 0);
   }
 
+  // ---- footprint, route and groove ----
+  const footprint = shapePolygon(s.shape, W, H);
+  const shaped = s.shape !== 'rectangle';
+  const footCs = geo ? geo.section([footprint]) : null;
+  const shapePrism = geo && shaped ? geo.prism(footCs!, -1, 5000) : null;
+  const routeLines: Pt[][] = (s.include.route ? (input.route?.stages ?? []) : [])
+    .map((st) => simplifyLine(st.map(([lon, lat]) => proj.toModel(lon, lat)), 0.04))
+    .filter((l) => l.length >= 2);
+  const floorZ = Math.min(1.2, s.baseMm / 2);
+  let groove: Manifold | null = null;
+  let nearRoute: ((x0: number, y0: number, x1: number, y1: number) => boolean) | null = null;
+  if (geo && routeLines.length && s.route.style === 'insert') {
+    const r = s.route.widthMm / 2 + s.route.clearanceMm;
+    const cs = geo.own(corridor(geo, routeLines, r).intersect(footCs!));
+    groove = geo.prism(cs, floorZ, 5000);
+    nearRoute = proximity(routeLines, r + 0.5, W, H);
+  }
+  /** Clip a large part (terrain, slabs) to the footprint and cut the groove. */
+  const shapeAndGroove = (m: MeshData): MeshData | null => {
+    if (!geo || (!shapePrism && !groove)) return m;
+    let r = geo.solid(m);
+    if (shapePrism) r = geo.and(r, shapePrism);
+    if (groove) r = geo.minus(r, groove);
+    return r.isEmpty() ? null : geo.mesh(r);
+  };
+  /** Same for a small shell (building, road piece, marker): only touch it when needed. */
+  const finishShell = (m: MeshData): MeshData | null => {
+    if (!geo) return m;
+    let out = m;
+    if (shapePrism) {
+      let allIn = true;
+      for (let i = 0; i < out.positions.length && allIn; i += 3) {
+        if (!pointInPolygon([out.positions[i], out.positions[i + 1]], footprint)) allIn = false;
+      }
+      if (!allIn) {
+        const r = geo.and(geo.solid(out), shapePrism);
+        if (r.isEmpty()) return null;
+        out = geo.mesh(r);
+      }
+    }
+    if (groove && nearRoute) {
+      const b = meshBounds(out);
+      if (nearRoute(b.min[0], b.min[1], b.max[0], b.max[1])) {
+        const r = geo.minus(geo.solid(out), groove);
+        if (r.isEmpty()) return null;
+        out = geo.mesh(r);
+      }
+    }
+    return out;
+  };
+
   progress('Building terrain', 0.4);
   const parts: PartResult[] = [];
   const part = (id: PartId, name: string, mesh: MeshData, shells: number, inStl: boolean) => {
     if (!mesh.indices.length) return;
+    if (id === 'route' || id === 'base' || id === 'labels') {
+      // produced by Manifold: verify rather than trust
+      stats.shells++;
+      const a = analyzeShell(mesh);
+      if (!a.watertight || a.volume <= 0) stats.failed++;
+    }
     parts.push({
       id,
       name,
@@ -179,7 +275,9 @@ export function generateModel(input: GenerateInput, progress: ProgressFn = () =>
   if (terrainClean.flipped) stats.flipped++;
   const terrainOk = terrainClean.analysis.watertight;
   if (!terrainOk) stats.failed++;
-  part('terrain', 'Terrain', terrainClean.mesh, 1, true);
+  if (geo) progress('Shaping the terrain', 0.45);
+  const terrainMesh = shapeAndGroove(terrainClean.mesh);
+  if (terrainMesh) part('terrain', 'Terrain', terrainMesh, 1, true);
 
   // ---- water & park tint slabs ----
   if (waterCells) {
@@ -190,7 +288,8 @@ export function generateModel(input: GenerateInput, progress: ProgressFn = () =>
       (v) => zTerrain[v] + GEOM.waterRaiseMm,
       (v) => Math.max(0.2, zTerrain[v] - GEOM.embedMm),
     );
-    const m = accept(slab.mesh, stats);
+    const m0 = accept(slab.mesh, stats);
+    const m = m0 && shapeAndGroove(m0);
     if (m) part('water', 'Water', m, 1, false);
     else warnings.push('Water layer failed the manifold check and was left out.');
   }
@@ -202,7 +301,8 @@ export function generateModel(input: GenerateInput, progress: ProgressFn = () =>
       (v) => zTerrain[v] + GEOM.parkRaiseMm,
       (v) => Math.max(0.2, zTerrain[v] - GEOM.embedMm),
     );
-    const m = accept(slab.mesh, stats);
+    const m0 = accept(slab.mesh, stats);
+    const m = m0 && shapeAndGroove(m0);
     if (m) part('parks', 'Parks & green', m, 1, false);
     else warnings.push('Park layer failed the manifold check and was left out.');
   }
@@ -212,7 +312,7 @@ export function generateModel(input: GenerateInput, progress: ProgressFn = () =>
   let buildingsDropped = 0;
   if (s.include.buildings && features.buildings.length) {
     progress('Extruding buildings', 0.5);
-    const rect: Pt[][] = [[[0, 0], [W, 0], [W, H], [0, H], [0, 0]]];
+    const rect: Pt[][] = [[...footprint, footprint[0]]];
     const meshes: MeshData[] = [];
     const bScale = proj.scale * s.buildingScale;
     const total = features.buildings.length;
@@ -271,11 +371,13 @@ export function generateModel(input: GenerateInput, progress: ProgressFn = () =>
         const zBot = Math.max(0.2, tMin - GEOM.buildingEmbedMm);
         const zTop = Math.max(gMin + b.heightM * bScale, gMax + s.minBuildingMm);
         const solid = extrudePolygon(rings, zBot, zTop);
-        const ok = solid ? accept(solid, stats) : null;
-        if (!ok) {
+        const ok0 = solid ? accept(solid, stats) : null;
+        if (!ok0) {
           buildingsDropped++;
           continue;
         }
+        const ok = finishShell(ok0);
+        if (!ok) continue;
         meshes.push(ok);
         buildingCount++;
       }
@@ -302,9 +404,15 @@ export function generateModel(input: GenerateInput, progress: ProgressFn = () =>
           if (!c) continue;
           [a, b] = c;
         }
+        if (shaped) {
+          const c = clipToConvex(a, b, footprint);
+          if (!c) continue;
+          [a, b] = c;
+        }
         const ribbon = roadRibbon(a, b, hw, k > 0 ? hw : 0, k + 2 < r.pts.length ? hw : 0, step, W, H, topAt, botAt);
         if (!ribbon) continue;
-        const ok = accept(ribbon, stats);
+        const ok0 = accept(ribbon, stats);
+        const ok = ok0 && finishShell(ok0);
         if (ok) {
           meshes.push(ok);
           roadSegments++;
@@ -324,22 +432,73 @@ export function generateModel(input: GenerateInput, progress: ProgressFn = () =>
       const [, gMax] = fieldRange(g, zSurface, mx - half, my - half, mx + half, my + half);
       const [tMin] = fieldRange(g, zTerrain, mx - half, my - half, mx + half, my + half);
       const solid = extrudePolygon([ring], Math.max(0.2, tMin - GEOM.buildingEmbedMm), gMax + 1.6);
-      const ok = solid ? accept(solid, stats) : null;
+      const ok0 = solid ? accept(solid, stats) : null;
+      const ok = ok0 && finishShell(ok0);
       if (ok) part('marker', 'Marker', ok, 1, true);
     } else {
       warnings.push('The marker is outside the selected area, so it was left out.');
     }
   }
 
+  // ---- route ----
+  let routeInfo: Report['route'] = null;
+  if (geo && routeLines.length) {
+    progress('Tracing the route', 0.85);
+    const cs = geo.own(corridor(geo, routeLines, s.route.widthMm / 2).intersect(footCs!));
+    if (!cs.isEmpty()) {
+      const top = geo.solid(terrainSolid(g, zSurface.map((z) => z + s.route.raiseMm)));
+      let wall = geo.and(geo.prism(cs, floorZ, 5000), top);
+      if (s.route.style === 'raised') {
+        const below = geo.solid(terrainSolid(g, zTerrain.map((z) => Math.max(0.1, z - GEOM.embedMm))));
+        wall = geo.minus(wall, below);
+      }
+      if (!wall.isEmpty()) {
+        part('route', s.route.style === 'insert' ? 'Route insert' : 'Route', geo.mesh(wall), 1, true);
+        let lengthMm = 0;
+        for (const l of routeLines) for (let k = 1; k < l.length; k++) lengthMm += Math.hypot(l[k][0] - l[k - 1][0], l[k][1] - l[k - 1][1]);
+        let zMinT = Infinity;
+        for (let v = 0; v < nV; v++) zMinT = Math.min(zMinT, zTerrain[v]);
+        routeInfo = {
+          style: s.route.style,
+          lengthMm,
+          widthMm: s.route.widthMm,
+          clearanceMm: s.route.clearanceMm,
+          grooveDepthMm: s.route.style === 'insert' ? zMinT - floorZ : 0,
+          stages: routeLines.length,
+        };
+      }
+    }
+    if (!routeInfo) warnings.push('The route lies outside the selected area, so it was left out.');
+  }
+
+  // ---- plinth and labels ----
+  let baseInfo: Report['base'] = null;
+  if (geo && s.include.base) {
+    progress('Building the base', 0.9);
+    const texts = s.include.labels ? s.base : null;
+    if (texts && !ext.glyphs) warnings.push('The label font did not load, so the base has no text.');
+    const pl = buildPlinth(geo, s.shape, footprint, W, H, s.base.heightMm, texts, ext.glyphs ?? null);
+    warnings.push(...pl.warnings);
+    for (const p of parts) for (let i = 2; i < p.positions.length; i += 3) p.positions[i] += s.base.heightMm;
+    part('base', 'Base', pl.base, 1, true);
+    if (pl.labels) part('labels', 'Labels', pl.labels, pl.labelCount, true);
+    baseInfo = { heightMm: s.base.heightMm, labels: pl.labelCount };
+  }
+
   progress('Checking the model', 0.95);
   let triangles = 0;
-  let zMax = 0;
+  const lo: [number, number, number] = [Infinity, Infinity, Infinity];
+  const hi: [number, number, number] = [-Infinity, -Infinity, -Infinity];
   for (const p of parts) {
     triangles += p.indices.length / 3;
-    zMax = Math.max(zMax, meshBounds(p).max[2]);
+    const b = meshBounds(p);
+    for (let k = 0; k < 3; k++) {
+      lo[k] = Math.min(lo[k], b.min[k]);
+      hi[k] = Math.max(hi[k], b.max[k]);
+    }
   }
   const report: Report = {
-    sizeMm: [W, H, zMax],
+    sizeMm: [hi[0] - lo[0], hi[1] - lo[1], hi[2]],
     scale: 1000 / proj.scale,
     triangles,
     buildings: buildingCount,
@@ -360,6 +519,9 @@ export function generateModel(input: GenerateInput, progress: ProgressFn = () =>
     realSizeM: [proj.widthM, proj.heightM],
     demZoom: dem.zoom,
     warnings,
+    shape: s.shape,
+    route: routeInfo,
+    base: baseInfo,
   };
   progress('Done', 1);
   return { parts, report };
@@ -391,4 +553,72 @@ function clipToRect(a: Pt, b: Pt, W: number, H: number): [Pt, Pt] | null {
     [a[0] + dx * t0, a[1] + dy * t0],
     [a[0] + dx * t1, a[1] + dy * t1],
   ];
+}
+
+/** Cyrus–Beck clip of segment a→b against a convex counter-clockwise polygon. */
+function clipToConvex(a: Pt, b: Pt, poly: Pt[]): [Pt, Pt] | null {
+  let t0 = 0;
+  let t1 = 1;
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  for (let k = 0; k < poly.length; k++) {
+    const p = poly[k];
+    const q = poly[(k + 1) % poly.length];
+    // inward normal of a CCW edge
+    const nx = -(q[1] - p[1]);
+    const ny = q[0] - p[0];
+    const num = nx * (a[0] - p[0]) + ny * (a[1] - p[1]);
+    const den = nx * dx + ny * dy;
+    if (den === 0) {
+      if (num < 0) return null;
+    } else {
+      const t = -num / den;
+      if (den > 0) t0 = Math.max(t0, t);
+      else t1 = Math.min(t1, t);
+      if (t0 > t1) return null;
+    }
+  }
+  if (t1 - t0 < 1e-9) return null;
+  return [
+    [a[0] + dx * t0, a[1] + dy * t0],
+    [a[0] + dx * t1, a[1] + dy * t1],
+  ];
+}
+
+/** Coarse occupancy grid answering "is this box within r of the route?". */
+function proximity(lines: Pt[][], r: number, W: number, H: number) {
+  const cell = 2;
+  const nx = Math.ceil(W / cell) + 1;
+  const ny = Math.ceil(H / cell) + 1;
+  const occ = new Uint8Array(nx * ny);
+  const pad = r + cell;
+  for (const l of lines) {
+    for (let k = 0; k + 1 < l.length; k++) {
+      const [ax, ay] = l[k];
+      const [bx, by] = l[k + 1];
+      const i0 = Math.max(0, Math.floor((Math.min(ax, bx) - pad) / cell));
+      const i1 = Math.min(nx - 1, Math.floor((Math.max(ax, bx) + pad) / cell));
+      const j0 = Math.max(0, Math.floor((Math.min(ay, by) - pad) / cell));
+      const j1 = Math.min(ny - 1, Math.floor((Math.max(ay, by) + pad) / cell));
+      const vx = bx - ax;
+      const vy = by - ay;
+      const l2 = vx * vx + vy * vy || 1e-12;
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          const cx = (i + 0.5) * cell;
+          const cy = (j + 0.5) * cell;
+          const t = Math.max(0, Math.min(1, ((cx - ax) * vx + (cy - ay) * vy) / l2));
+          if (Math.hypot(ax + vx * t - cx, ay + vy * t - cy) <= pad) occ[j * nx + i] = 1;
+        }
+      }
+    }
+  }
+  return (x0: number, y0: number, x1: number, y1: number): boolean => {
+    const i0 = Math.max(0, Math.floor(x0 / cell));
+    const i1 = Math.min(nx - 1, Math.floor(x1 / cell));
+    const j0 = Math.max(0, Math.floor(y0 / cell));
+    const j1 = Math.min(ny - 1, Math.floor(y1 / cell));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (occ[j * nx + i]) return true;
+    return false;
+  };
 }

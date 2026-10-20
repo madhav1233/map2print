@@ -30,6 +30,23 @@ Everything runs in the browser. There's no server, account or upload.
 
 An optional **heart marker** can be dragged onto the map to mark a special place. It prints as its own colour.
 
+## Race and hike keepsakes (GPX)
+
+Add the GPX file from a race, or several files for a multi-day hike, and map2print prints the route on its terrain.
+
+![Route insert lifted out of its groove, on an octagonal base with raised labels](docs/route-insert.png)
+
+- **Import.** Use *Add GPX files* or drop files on the map. Tracks and routes are both read, and stages are put in date order, so the files can be added in any order. Each day shows its distance and climb, and the route is drawn on the map with one colour per day.
+- **Framing.** The area fits itself around the route, so it stays inside the chosen shape: rectangle, octagon, hexagon or circle.
+- **Two route styles:**
+  - *Raised ridge*: a ridge that follows the terrain, printed in place in its own colour.
+  - *Slot-in insert*, like the printed keepsakes in the inspiration video: a groove is cut into the terrain, and the route is exported as a separate wall that prints standing up. Its top follows the elevation profile, and it presses into the groove with a set clearance (0.15 mm a side by default). The preview lifts the insert out so you can see both pieces. There's a separate *Download route insert (STL)*.
+- **Base and labels.** The model can stand on a chamfered base. Raised text goes on the front face and the faces either side. It fills in the trail name, total distance and dates (as local dates for the route's location), and you can edit all three.
+- **First-route preset.** Adding the first route sets up a keepsake: an octagon on a base with labels, olive terrain, blue water, a red route, a dark base and white text, on slots 1–5. Buildings and roads are off. Everything stays editable.
+- **Large areas.** Races and multi-day hikes often cover 10–100 km. Buildings and roads are only fetched up to 8 km, and water and parks up to 60 km. Beyond that the model is terrain and route, and sea comes from the elevation data. The upper limit is 200 km.
+
+Shapes, the groove, the insert and the base are built with [Manifold](https://github.com/elalish/manifold), loaded as WebAssembly only when needed, so every boolean result is guaranteed manifold. Labels use Barlow Condensed glyph outlines via opentype.js.
+
 ![Print-ready checks, scale and downloads](docs/results.png)
 
 ## How it works
@@ -57,6 +74,8 @@ Leaflet map ─► bbox ─► Terrain Tiles (Terrarium PNG) ─┐
 | `src/core/solids.ts` | Closed-solid builders: heightfield solid, mask slabs (with diagonal pinch handling), polygon extrusion, road ribbons |
 | `src/core/mesh.ts` | Welding, degenerate removal, manifold and orientation analysis |
 | `src/core/generate.ts` | The pipeline and the print-readiness report |
+| `src/core/gpx.ts` | GPX parsing (tracks and routes, any namespace prefix), stage ordering, distance, climb, labels |
+| `src/core/memento.ts` | Footprint shapes, fitting the area to a route, route corridor, plinth with raised labels (Manifold) |
 | `src/core/export.ts` | Binary STL, Bambu/Orca-style 3MF (`3D/Objects/object_1.model` plus `Metadata/model_settings.config`), zip |
 | `src/fetchers.ts` | Tile download and decode, Overpass with endpoint fallback, Nominatim search |
 | `src/mapView.ts`, `src/preview.ts`, `src/main.ts` | Map selection, three.js preview, UI |
@@ -92,6 +111,7 @@ Pushing to `main` runs the tests and deploys `dist/` to GitHub Pages (`.github/w
 
 ## Data and credits
 
+- Geometry booleans: [Manifold](https://github.com/elalish/manifold) (Apache-2.0). Fonts: Barlow and Barlow Condensed (SIL OFL) via Fontsource. Glyph outlines: opentype.js (MIT).
 - Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under the ODbL. If you share or sell prints, include this attribution.
 - Elevation: [Terrain Tiles on AWS Open Data](https://registry.opendata.aws/terrain-tiles/) (Mapzen/Tilezen; sources include USGS 3DEP, SRTM, GMTED2010, ETOPO1, EU-DEM and others).
 - Basemaps: OpenStreetMap standard tiles and [OpenTopoMap](https://opentopomap.org) (CC-BY-SA). Geocoding by Nominatim. No API keys are needed anywhere.

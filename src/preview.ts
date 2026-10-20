@@ -49,14 +49,28 @@ export class Preview {
     this.resize();
   }
 
-  setParts(parts: PreviewPart[], sizeMm: [number, number, number]): void {
+  /** `liftRoute` raises a slot-in insert above its groove so both are visible. */
+  setParts(parts: PreviewPart[], opts: { liftRoute?: number } = {}): void {
     for (const m of this.meshes.values()) {
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
       this.model.remove(m);
     }
     this.meshes.clear();
-    const [W, H] = sizeMm;
+    // centre on the real bounds (a base reaches beyond the map area)
+    const lo = [Infinity, Infinity, Infinity];
+    const hi = [-Infinity, -Infinity, -Infinity];
+    for (const p of parts) {
+      for (let i = 0; i < p.positions.length; i += 3) {
+        for (let k = 0; k < 3; k++) {
+          const v = p.positions[i + k];
+          if (v < lo[k]) lo[k] = v;
+          if (v > hi[k]) hi[k] = v;
+        }
+      }
+    }
+    const cx = (lo[0] + hi[0]) / 2;
+    const cy = (lo[1] + hi[1]) / 2;
     for (const p of parts) {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(p.positions, 3));
@@ -67,20 +81,20 @@ export class Preview {
         roughness: 0.82,
         metalness: 0,
         flatShading: true,
-        polygonOffset: p.id === 'terrain',
+        polygonOffset: p.id === 'terrain' || p.id === 'base',
         polygonOffsetFactor: 1,
         polygonOffsetUnits: 1,
       });
       const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(-W / 2, -H / 2, 0);
+      mesh.position.set(-cx, -cy, p.id === 'route' ? (opts.liftRoute ?? 0) : 0);
       this.model.add(mesh);
       this.meshes.set(p.id, mesh);
     }
-    const d = Math.max(W, H);
+    const d = Math.max(hi[0] - lo[0], hi[1] - lo[1]);
     this.camera.near = d / 100;
     this.camera.far = d * 20;
     this.camera.position.set(-d * 0.55, d * 0.85, d * 1.05);
-    this.controls.target.set(0, sizeMm[2] * 0.15, 0);
+    this.controls.target.set(0, hi[2] * 0.2, 0);
     this.camera.updateProjectionMatrix();
     this.controls.update();
     this.requestRender();
