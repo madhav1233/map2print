@@ -1,7 +1,7 @@
 /**
  * Geometry for route keepsakes: model footprints (octagon, hexagon, circle),
  * the GPX route as a raised ridge or a slot-in insert with its groove, and a
- * chamfered plinth with raised labels. Uses Manifold (WASM) for exact,
+ * flat base plate with labels lying on its rim. Uses Manifold (WASM) for exact,
  * always-manifold booleans.
  */
 import type { CrossSection, Manifold, ManifoldToplevel, Mat4 } from 'manifold-3d';
