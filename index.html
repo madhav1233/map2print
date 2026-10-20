@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>map2print: real-world 3D map generator</title>
+    <meta name="description" content="Select any area on Earth and export a true-to-scale, watertight 3D-printable model with terrain, buildings, roads, water and parks. STL or multi-colour 3MF." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231f2a33'/%3E%3Cpath d='M5 24l7-9 5 6 4-4 6 7z' fill='%23eef0ea'/%3E%3Crect x='14' y='9' width='3' height='9' fill='%23eef0ea'/%3E%3Crect x='18' y='6' width='3' height='12' fill='%23eef0ea'/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <div class="app">
+      <main class="stage" aria-label="Map">
+        <div class="stage-bar">
+          <form class="search" id="search" role="search" autocomplete="off">
+            <label class="visually-hidden" for="search-input">Search for a place</label>
+            <input id="search-input" type="search" placeholder="Search a city, landmark or address" />
+            <button type="submit" aria-label="Search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5L21 21" /></svg>
+            </button>
+            <ul class="search-results" id="search-results" hidden></ul>
+          </form>
+          <div class="view-toggle" role="tablist" aria-label="View">
+            <button role="tab" id="tab-map" aria-selected="true">Map</button>
+            <button role="tab" id="tab-3d" aria-selected="false" disabled>3D preview</button>
+          </div>
+        </div>
+        <div id="map" class="map"></div>
+        <div id="preview" class="preview" hidden></div>
+        <p class="stage-hint" id="stage-hint">Drag on the map to outline your region</p>
+      </main>
+
+      <aside class="panel" aria-label="Model settings">
+        <header class="sheet-title">
+          <h1>map2print</h1>
+          <p>Turn any patch of the real world into a print-ready model: terrain from elevation data, buildings, roads, water and parks from OpenStreetMap.</p>
+        </header>
+
+        <section class="block" aria-labelledby="h-area">
+          <div class="block-head">
+            <h2 id="h-area">Area</h2>
+            <button class="link" id="draw-btn" type="button">Draw new area</button>
+          </div>
+          <p class="area-readout" id="area-readout">No area selected yet</p>
+          <label class="check"><input type="checkbox" id="square" /> Keep it square</label>
+        </section>
+
+        <section class="block" aria-labelledby="h-model">
+          <h2 id="h-model">Model</h2>
+          <div class="fields">
+            <label class="field">
+              <span>Longest side</span>
+              <span class="input-unit"><input type="number" id="size" min="40" max="400" step="5" value="180" /><em>mm</em></span>
+            </label>
+            <label class="field">
+              <span>Base thickness</span>
+              <span class="input-unit"><input type="number" id="base" min="1" max="20" step="0.5" value="4" /><em>mm</em></span>
+            </label>
+            <label class="field">
+              <span>Terrain exaggeration</span>
+              <span class="input-unit"><input type="number" id="exag" min="0.5" max="10" step="0.25" value="1.5" /><em>times</em></span>
+            </label>
+            <label class="field">
+              <span>Building height</span>
+              <span class="input-unit"><input type="number" id="bscale" min="0.5" max="5" step="0.25" value="1" /><em>times</em></span>
+            </label>
+            <label class="field field-wide">
+              <span>Detail</span>
+              <select id="detail">
+                <option value="0.4">Fine (0.4 mm grid)</option>
+                <option value="0.5" selected>Standard (0.5 mm grid)</option>
+                <option value="0.8">Draft (0.8 mm grid)</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="block" aria-labelledby="h-layers">
+          <h2 id="h-layers">Layers <span class="aside">filament slot</span></h2>
+          <ul class="legend" id="legend"></ul>
+          <label class="check sub"><input type="checkbox" id="paths" /> Include footpaths and cycleways</label>
+        </section>
+
+        <div class="actions">
+          <button class="primary" id="generate" type="button" disabled>Generate model</button>
+          <div class="progress" id="progress" hidden>
+            <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+            <p id="progress-text">Starting…</p>
+          </div>
+          <p class="error" id="error" role="alert" hidden></p>
+        </div>
+
+        <section class="block results" id="results" hidden aria-labelledby="h-results">
+          <h2 id="h-results">Print-ready checks</h2>
+          <ul class="checks" id="checks"></ul>
+          <div class="scale" id="scale-bar" aria-hidden="true"></div>
+          <dl class="stats" id="stats"></dl>
+          <div class="downloads">
+            <button class="dl dl-3mf" id="dl-3mf" type="button">Download 3MF <span>multi-colour, one part per slot</span></button>
+            <button class="dl" id="dl-stl" type="button">Download STL <span>single watertight model</span></button>
+            <button class="link" id="dl-zip" type="button">Download each layer as a separate STL (.zip)</button>
+          </div>
+          <p class="note">Open the 3MF in Bambu Studio or OrcaSlicer: terrain, buildings, roads, water and parks arrive as parts of one object, already assigned to their filament slots.</p>
+        </section>
+
+        <footer class="credits">
+          Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> (ODbL).
+          Elevation: <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Terrain Tiles on AWS Open Data</a> (USGS 3DEP, SRTM, GMTED, ETOPO1 and others).
+          Search: Nominatim. <a href="https://github.com/Madhav1233/map2print" target="_blank" rel="noopener">Source on GitHub</a>.
+        </footer>
+      </aside>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

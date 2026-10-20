@@ -1,0 +1,51 @@
+{
+  "name": "map2print",
+  "version": "0.1.0",
+  "description": "Select any area on Earth and export a true-to-scale, watertight 3D-printable city/terrain model (STL or multi-colour 3MF) from elevation data and OpenStreetMap.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p . && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc -p ."
+  },
+  "keywords": [
+    "3d-printing",
+    "openstreetmap",
+    "terrain",
+    "stl",
+    "3mf",
+    "bambu",
+    "city-map",
+    "dem"
+  ],
+  "author": "Madhav Rajesh",
+  "license": "MIT",
+  "dependencies": {
+    "@fontsource/barlow": "^5.3.0",
+    "@fontsource/barlow-condensed": "^5.3.0",
+    "earcut": "^3.2.4",
+    "fflate": "^0.8.3",
+    "leaflet": "^1.9.4",
+    "polygon-clipping": "^0.15.7",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/earcut": "^3.0.0",
+    "@types/leaflet": "^1.9.22",
+    "@types/pngjs": "^6.0.5",
+    "@types/three": "^0.186.0",
+    "pngjs": "^7.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
+  },
+  "type": "module",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Madhav1233/map2print.git"
+  }
+}
