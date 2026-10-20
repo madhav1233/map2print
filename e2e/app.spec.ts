@@ -56,7 +56,7 @@ async function mockNetwork(page: Page, calls: string[]) {
         body: JSON.stringify([{ display_name: 'Test City, Western Australia', lat: String(c.lat), lon: String(c.lon), boundingbox: [String(c.lat - 0.005), String(c.lat + 0.005), String(c.lon - 0.005), String(c.lon + 0.005)] }]),
       });
     }
-    if (url.includes('basemaps.cartocdn.com')) return route.fulfill({ status: 200, contentType: 'image/png', body: basemapTile });
+    if (/tile\.openstreetmap\.org|tile\.opentopomap\.org/.test(url)) return route.fulfill({ status: 200, contentType: 'image/png', body: basemapTile });
     return route.abort();
   });
 }
@@ -146,6 +146,8 @@ test('select, generate, preview and download', async ({ page }) => {
   const zip = unzipSync(new Uint8Array(readFileSync((await zipDl.path())!)));
   expect(Object.keys(zip).filter((k) => k.endsWith('.stl')).length).toBe(6);
 
+  expect(calls.some((u) => u.includes('tile.openstreetmap.org'))).toBe(true);
+  expect(calls.some((u) => /cartocdn|api[_-]?key|access_token/i.test(u))).toBe(false);
   expect(calls.some((u) => u.includes('terrarium'))).toBe(true);
   expect(calls.some((u) => u.includes('/api/interpreter'))).toBe(true);
   expect(errors.filter((e) => !/Failed to load resource|ERR_FAILED/.test(e))).toEqual([]);

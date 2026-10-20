@@ -31,11 +31,32 @@ export class MapView {
   constructor(el: HTMLElement) {
     this.map = L.map(el, { zoomControl: false, worldCopyJump: true, preferCanvas: true }).setView([40.7128, -74.006], 13);
     L.control.zoom({ position: 'bottomright' }).addTo(this.map);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      maxZoom: 19,
-      subdomains: 'abcd',
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    }).addTo(this.map);
+    // Keyless basemaps only: the site is public and static, so it must not depend on API keys.
+    const osm = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+    const basemaps: Record<string, L.TileLayer> = {
+      Streets: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: osm }),
+      Topographic: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+        maxZoom: 17,
+        subdomains: 'abc',
+        attribution: `${osm}, SRTM | Style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)`,
+      }),
+    };
+    let chosen = 'Streets';
+    try {
+      const saved = localStorage.getItem('map2print:basemap');
+      if (saved && saved in basemaps) chosen = saved;
+    } catch {
+      /* storage unavailable */
+    }
+    basemaps[chosen].addTo(this.map);
+    L.control.layers(basemaps, undefined, { position: 'bottomleft' }).addTo(this.map);
+    this.map.on('baselayerchange', (e: L.LayersControlEvent) => {
+      try {
+        localStorage.setItem('map2print:basemap', e.name);
+      } catch {
+        /* storage unavailable */
+      }
+    });
 
     const c = this.map.getContainer();
     c.addEventListener('pointerdown', (e) => this.down(e));

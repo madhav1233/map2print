@@ -94,7 +94,7 @@ Pushing to `main` runs the tests and deploys `dist/` to GitHub Pages (`.github/w
 
 - Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under the ODbL. If you share or sell prints, include this attribution.
 - Elevation: [Terrain Tiles on AWS Open Data](https://registry.opendata.aws/terrain-tiles/) (Mapzen/Tilezen; sources include USGS 3DEP, SRTM, GMTED2010, ETOPO1, EU-DEM and others).
-- Basemap © CARTO. Geocoding by Nominatim.
+- Basemaps: OpenStreetMap standard tiles and [OpenTopoMap](https://opentopomap.org) (CC-BY-SA). Geocoding by Nominatim. No API keys are needed anywhere.
 - Inspired by printpal's *Real-World 3D Map Generator*.
 
 ## License

@@ -314,6 +314,18 @@ select {
   font-size: 11px;
 }
 
+.leaflet-control-layers {
+  border: 1px solid var(--ink) !important;
+  border-radius: var(--radius-m) !important;
+  background: var(--sheet) !important;
+  box-shadow: 0 1px 0 var(--ink) !important;
+  font-size: 14px;
+}
+
+.leaflet-control-layers-expanded {
+  padding: 6px 10px;
+}
+
 /* ---------- panel: the sheet's legend ---------- */
 
 .panel {
