@@ -9,7 +9,7 @@ import { fieldRange, levelWater, makeGrid, parityMask, rasterizeLine, rasterizeR
 import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { buildPlate, corridor, Geo, pointInPolygon, shapePolygon, simplifyLine, type Glyphs } from './memento';
 import { analyzeShell, cleanShell, mergeMeshes, meshBounds, type MeshData } from './mesh';
-import { parseOsm, type Features, type OsmJson, type Pt, type Ring } from './osm';
+import { emptyFeatures, parseOsm, type Features, type OsmJson, type Pt, type Ring } from './osm';
 import { Projector, sampleDem } from './projection';
 import { cleanRing, extrudePolygon, heartRing, maskSlab, ringArea, roadRibbon, terrainSolid } from './solids';
 import {
@@ -52,6 +52,9 @@ export type ProgressFn = (stage: string, fraction?: number) => void;
 
 const WATER = 1;
 const PARK = 2;
+const FOREST = 3;
+const ROCK = 4;
+const SNOW = 5;
 
 interface Stats {
   welded: number;
@@ -109,25 +112,24 @@ function generateInner(input: GenerateInput, progress: ProgressFn, ext: Extras, 
   }
 
   progress('Reading OpenStreetMap features', 0.15);
-  const features: Features = input.osm
-    ? parseOsm(input.osm, proj, { includePaths: s.include.paths })
-    : { buildings: [], roads: [], waterAreas: [], waterPartials: [], waterLines: [], coastlines: [], parks: [], partialParksSkipped: 0 };
-  if (features.partialParksSkipped) warnings.push(`${features.partialParksSkipped} very large park or forest areas crossing the edge were left untinted.`);
+  const features: Features = input.osm ? parseOsm(input.osm, proj, { includePaths: s.include.paths }) : emptyFeatures();
+  if (features.partialLandSkipped && (s.include.parks || s.include.forest || s.include.rock || s.include.snow))
+    warnings.push(`${features.partialLandSkipped} very large park, forest, rock or glacier areas crossing the edge were left untinted.`);
 
   // ---- land cover masks ----
-  progress('Mapping water and parks', 0.25);
+  progress('Mapping water, snow, rock and forest', 0.25);
   const cover = new Uint8Array(g.nx * g.ny);
+  const cellH = (c: number) => {
+    const i = c % g.nx;
+    const j = (c - i) / g.nx;
+    const v = j * sx + i;
+    return (h0[v] + h0[v + 1] + h0[v + sx] + h0[v + sx + 1]) / 4;
+  };
   if (s.include.water) {
     for (const rings of features.waterAreas) rasterizeRings(g, rings, cover, WATER, true);
     for (const l of features.waterLines) rasterizeLine(g, l.pts, (l.widthM * proj.scale) / 2, cover, WATER);
     // Giant water bodies delivered only near the window: the boundary fixes
     // the fill up to inversion; water is the side that sits lower in the DEM.
-    const cellH = (c: number) => {
-      const i = c % g.nx;
-      const j = (c - i) / g.nx;
-      const v = j * sx + i;
-      return (h0[v] + h0[v + 1] + h0[v + sx] + h0[v + sx + 1]) / 4;
-    };
     for (const lines of features.waterPartials) {
       const a = parityMask(g, lines);
       let nA = 0;
@@ -164,14 +166,47 @@ function generateInner(input: GenerateInput, progress: ProgressFn, ext: Extras, 
       if (Math.max(h0[v], h0[v + 1], h0[v + sx], h0[v + sx + 1]) <= 0) cover[c] = WATER;
     }
   }
+  // Priority after water: snow, rock, forest, parks (each only fills free cells).
+  let snowLine: Report['snowLine'] = null;
+  if (s.include.snow) {
+    for (const rings of features.glaciers) rasterizeRings(g, rings, cover, SNOW, false);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let c = 0; c < cover.length; c++) {
+      if (cover[c] === WATER) continue;
+      const hc = cellH(c);
+      if (hc < lo) lo = hc;
+      if (hc > hi) hi = hc;
+    }
+    const auto = s.snow.altitudeM === null || !isFinite(s.snow.altitudeM);
+    // automatic: the top 15% of the relief, rounded to a tidy altitude
+    const step = hi - lo > 1000 ? 50 : 10;
+    const line = auto ? Math.round((hi - 0.15 * (hi - lo)) / step) * step : (s.snow.altitudeM as number);
+    for (let c = 0; c < cover.length; c++) if (cover[c] === 0 && cellH(c) >= line) cover[c] = SNOW;
+    snowLine = { altitudeM: line, zMm: 0, auto, glaciers: features.glaciers.length > 0 };
+  }
+  if (s.include.rock) {
+    for (const rings of features.rocks) rasterizeRings(g, rings, cover, ROCK, false);
+    // real-world slope of each cell from its four corners
+    const dxm = g.dx / proj.scale;
+    const dym = g.dy / proj.scale;
+    const tanMin = Math.tan((Math.max(1, Math.min(89, s.rock.slopeDeg)) * Math.PI) / 180);
+    for (let c = 0; c < cover.length; c++) {
+      if (cover[c] !== 0) continue;
+      const i = c % g.nx;
+      const j = (c - i) / g.nx;
+      const v = j * sx + i;
+      const gx = (h0[v + 1] + h0[v + sx + 1] - h0[v] - h0[v + sx]) / (2 * dxm);
+      const gy = (h0[v + sx] + h0[v + sx + 1] - h0[v] - h0[v + 1]) / (2 * dym);
+      if (Math.hypot(gx, gy) >= tanMin) cover[c] = ROCK;
+    }
+  }
+  if (s.include.forest) for (const rings of features.forests) rasterizeRings(g, rings, cover, FOREST, false);
   if (s.include.parks) for (const rings of features.parks) rasterizeRings(g, rings, cover, PARK, false);
 
-  let waterCells = 0;
-  let parkCells = 0;
-  for (let c = 0; c < cover.length; c++) {
-    if (cover[c] === WATER) waterCells++;
-    else if (cover[c] === PARK) parkCells++;
-  }
+  const coverCount = [0, 0, 0, 0, 0, 0];
+  for (let c = 0; c < cover.length; c++) coverCount[cover[c]]++;
+  const waterCells = coverCount[WATER];
 
   // ---- heights ----
   progress('Levelling water', 0.3);
@@ -193,6 +228,8 @@ function generateInner(input: GenerateInput, progress: ProgressFn, ext: Extras, 
     zSurface[v] = s.baseMm + depress + (h[v] - hMin) * zs;
     zTerrain[v] = zSurface[v] - (lv.waterVertex[v] ? depress : 0);
   }
+
+  if (snowLine) snowLine.zMm = s.baseMm + depress + (snowLine.altitudeM - hMin) * zs;
 
   // ---- footprint, route and groove ----
   const footprint = shapePolygon(s.shape, W, H);
@@ -291,20 +328,28 @@ function generateInner(input: GenerateInput, progress: ProgressFn, ext: Extras, 
     const m0 = accept(slab.mesh, stats, false); // corner-touching cells keep separate vertices
     const m = m0 && shapeAndGroove(m0);
     if (m) part('water', 'Water', m, 1, false);
-    else warnings.push('Water layer failed the manifold check and was left out.');
+    else if (!m0) warnings.push('Water layer failed the manifold check and was left out.');
   }
-  if (parkCells) {
+  // thin tint layers lying on the ground, one per land-cover class
+  const tints: [number, PartId, string][] = [
+    [PARK, 'parks', 'Parks & green'],
+    [FOREST, 'forest', 'Forest'],
+    [ROCK, 'rock', 'Rock'],
+    [SNOW, 'snow', 'Snow'],
+  ];
+  for (const [value, id, name] of tints) {
+    if (!coverCount[value]) continue;
     const slab = maskSlab(
       g,
       cover,
-      PARK,
+      value,
       (v) => zTerrain[v] + GEOM.parkRaiseMm,
       (v) => Math.max(0.2, zTerrain[v] - GEOM.embedMm),
     );
     const m0 = accept(slab.mesh, stats, false); // corner-touching cells keep separate vertices
     const m = m0 && shapeAndGroove(m0);
-    if (m) part('parks', 'Parks & green', m, 1, false);
-    else warnings.push('Park layer failed the manifold check and was left out.');
+    if (m) part(id, name, m, 1, false);
+    else if (!m0) warnings.push(`${name} layer failed the manifold check and was left out.`);
   }
 
   // ---- buildings ----
@@ -484,6 +529,7 @@ function generateInner(input: GenerateInput, progress: ProgressFn, ext: Extras, 
     part('base', 'Base', pl.base, 1, true);
     if (pl.labels) part('labels', 'Labels', pl.labels, pl.labelCount, true);
     baseInfo = { plateMm: plate, rimMm: s.base.rimMm, labels: pl.labelCount };
+    if (snowLine) snowLine.zMm += plate;
   }
 
   progress('Checking the model', 0.95);
@@ -516,7 +562,11 @@ function generateInner(input: GenerateInput, progress: ProgressFn, ext: Extras, 
     minBuildingMm: s.minBuildingMm,
     waterBodies: lv.bodies,
     waterAreaPct: (100 * waterCells) / cover.length,
-    parkAreaPct: (100 * parkCells) / cover.length,
+    parkAreaPct: (100 * coverCount[PARK]) / cover.length,
+    forestAreaPct: (100 * coverCount[FOREST]) / cover.length,
+    rockAreaPct: (100 * coverCount[ROCK]) / cover.length,
+    snowAreaPct: (100 * coverCount[SNOW]) / cover.length,
+    snowLine: snowLine && coverCount[SNOW] ? snowLine : null,
     realSizeM: [proj.widthM, proj.heightM],
     demZoom: dem.zoom,
     warnings,

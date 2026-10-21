@@ -121,14 +121,14 @@ out geom qt;`);
   }
   if (layers.landcover) {
     parts.push(`(
-  way["natural"~"^(water|coastline|wood|scrub|grassland|heath)$"](${bb});
+  way["natural"~"^(water|coastline|wood|scrub|grassland|heath|glacier|bare_rock|scree|shingle)$"](${bb});
   way["waterway"~"^(riverbank|dock|river|canal)$"](${bb});
   way["landuse"~"^(reservoir|basin|grass|forest|meadow|recreation_ground|cemetery|village_green|allotments|orchard|vineyard)$"](${bb});
   way["leisure"~"^(park|garden|golf_course|nature_reserve|pitch|common|dog_park)$"](${bb});
 );
 out geom qt;
 (
-  relation["natural"~"^(water|wood|scrub|grassland|heath)$"]["type"="multipolygon"](${bb});
+  relation["natural"~"^(water|wood|scrub|grassland|heath|glacier|bare_rock|scree)$"]["type"="multipolygon"](${bb});
   relation["waterway"="riverbank"]["type"="multipolygon"](${bb});
   relation["landuse"~"^(reservoir|basin|grass|forest|meadow|recreation_ground|cemetery)$"]["type"="multipolygon"](${bb});
   relation["leisure"~"^(park|garden|golf_course|nature_reserve|common)$"]["type"="multipolygon"](${bb});
@@ -215,17 +215,25 @@ export async function fetchOsm(
   // fill exactly; giant ones (big rivers, forests) stay partial and are
   // resolved locally.
   const wayIds = new Set(json.elements.filter((e) => e.type === 'way').map((e) => e.id));
-  const small = json.elements
+  // Forests and glaciers are often big multi-part relations, so allow fairly
+  // large ones within an overall budget; truly giant ones stay partial.
+  const cut = json.elements
     .filter(
       (e) =>
         e.type === 'relation' &&
         e.members &&
         !e.members.some((m) => m.geometry) &&
         e.members.some((m) => m.type === 'way' && !wayIds.has(m.ref)) &&
-        e.members.length <= 40,
+        e.members.length <= 400,
     )
-    .map((e) => e.id)
-    .slice(0, 60);
+    .sort((a, b) => a.members!.length - b.members!.length);
+  const small: number[] = [];
+  let budget = 3000;
+  for (const e of cut) {
+    if (small.length >= 60 || e.members!.length > budget) break;
+    budget -= e.members!.length;
+    small.push(e.id);
+  }
   if (small.length) {
     try {
       const full = await overpass(`[out:json][timeout:60];rel(id:${small.join(',')});out geom qt;`, onStatus, signal);

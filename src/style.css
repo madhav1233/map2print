@@ -963,3 +963,11 @@ select {
 .dl[hidden] {
   display: none;
 }
+
+.layer-options {
+  margin-top: 8px;
+}
+
+.layer-options:not(:has(.field:not([hidden]))) {
+  display: none;
+}

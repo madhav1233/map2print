@@ -115,7 +115,7 @@ test('select, generate, preview and download', async ({ page }) => {
   expect(checks).toMatch(/\d+ buildings extruded/);
   expect(checks).toMatch(/\d+ road segments raised/);
   expect(checks).toContain('water');
-  expect(checks).toContain('Multi-colour 3MF available: 6 parts');
+  expect(checks).toContain('Multi-colour 3MF available: 7 parts');
   expect(await page.locator('#checks li.bad').count()).toBe(0);
   console.log(await page.locator('#stats').innerText());
   await page.waitForTimeout(600);
@@ -148,7 +148,7 @@ test('select, generate, preview and download', async ({ page }) => {
 
   const [zipDl] = await Promise.all([page.waitForEvent('download'), page.click('#dl-zip')]);
   const zip = unzipSync(new Uint8Array(readFileSync((await zipDl.path())!)));
-  expect(Object.keys(zip).filter((k) => k.endsWith('.stl')).length).toBe(6);
+  expect(Object.keys(zip).filter((k) => k.endsWith('.stl')).length).toBe(7);
 
   expect(calls.some((u) => u.includes('tile.openstreetmap.org'))).toBe(true);
   expect(calls.some((u) => /cartocdn|api[_-]?key|access_token/i.test(u))).toBe(false);
@@ -192,9 +192,20 @@ test('GPX route keepsake: upload two days, generate, switch to insert, download'
   await page.waitForTimeout(400);
   await page.screenshot({ path: `${SHOTS}/06-route-map.png` });
 
+  // optional snow caps and rock
+  await expect(page.locator('#snow-option')).toBeHidden();
+  await page.check('input[data-layer="snow"]');
+  await page.check('input[data-layer="rock"]');
+  await expect(page.locator('#snow-option')).toBeVisible();
+  await expect(page.locator('#rock-option')).toBeVisible();
+  await expect(page.locator('input[data-layer="forest"]')).toBeChecked();
+
   await page.click('#generate');
   await expect(page.locator('#results')).toBeVisible({ timeout: 120000 });
   let checks = await page.locator('#checks').innerText();
+  expect(checks).toMatch(/Snow above [\d,]+ m \(automatic/);
+  expect(checks).toContain('A filament change to white at');
+  expect(checks).toContain('Rock on slopes over 35°');
   console.log(checks);
   expect(checks).toContain('Route traced as a 1.2 mm ridge across 2 stages');
   expect(checks).toContain('clipped to an octagon');
@@ -223,6 +234,6 @@ test('GPX route keepsake: upload two days, generate, switch to insert, download'
   const [mfDl] = await Promise.all([page.waitForEvent('download'), page.click('#dl-3mf')]);
   const files = unzipSync(new Uint8Array(readFileSync((await mfDl.path())!)));
   const cfg = strFromU8(files['Metadata/model_settings.config']);
-  for (const name of ['Terrain', 'Water', 'Route insert', 'Base', 'Labels']) expect(cfg).toContain(`value="${name}"`);
+  for (const name of ['Terrain', 'Water', 'Route insert', 'Base', 'Labels', 'Snow', 'Rock']) expect(cfg).toContain(`value="${name}"`);
   expect(errors).toEqual([]);
 });

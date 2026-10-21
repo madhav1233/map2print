@@ -30,6 +30,14 @@ Everything runs in the browser. There's no server, account or upload.
 
 An optional **heart marker** can be dragged onto the map to mark a special place. It prints as its own colour.
 
+### Forest, rock and snow caps
+
+- **Forest** (on by default): OpenStreetMap forest and woodland is its own darker-green layer, separate from parks.
+- **Rock** (optional): ground steeper than a slope you set (35° by default, measured on the real terrain before any exaggeration), plus mapped bare rock and scree. Slopes come from the elevation data, so this works for areas of any size.
+- **Snow caps** (optional): ground above a snow line, plus mapped glaciers. Leave the altitude blank for an automatic snow line covering the top 15% of the relief. The report also gives the layer height of that snow line. On a single-colour printer, a filament change to white at that height gives the same caps without a separate part.
+
+Each one is a thin tint layer on its own filament slot. Where they overlap, water wins, then snow, rock, forest and parks. In the race-keepsake preset, snow shares the white filament with the labels.
+
 ## Race and hike keepsakes (GPX)
 
 Add the GPX file from a race, or several files for a multi-day hike, and map2print prints the route on its terrain.
@@ -43,7 +51,7 @@ Add the GPX file from a race, or several files for a multi-day hike, and map2pri
   - *Slot-in insert*, like the printed keepsakes in the inspiration video: a groove is cut into the terrain, and the route is exported as a separate wall that prints standing up. Its top follows the elevation profile, and it presses into the groove with a set clearance (0.15 mm a side by default). The preview lifts the insert out so you can see both pieces. There's a separate *Download route insert (STL)*.
 - **Base plate and labels.** The model can stand on a thin, straight-sided plate (3 mm by default). The plate reaches a rim (12 mm by default) beyond the map on every side. Labels lie flat on that rim, in front of the model and on the faces either side, raised 0.6 mm (three 0.2 mm layers). The tops of the letters point at the model, so they read from outside. It fills in the trail name, total distance and dates (as local dates for the route's location), and you can edit all three. Everything is parallel to the bed, so there are no supports and few layers, and the label colour is only needed on the top three layers. On a circle, the straight labels are sized to stay on the curved rim.
 - **First-route preset.** Adding the first route sets up a keepsake: an octagon on a flat base plate with labels, olive terrain, blue water, a red route, a dark base and white text, on slots 1–5. Buildings and roads are off. Everything stays editable.
-- **Large areas.** Races and multi-day hikes often cover 10–100 km. Buildings and roads are only fetched up to 8 km, and water and parks up to 60 km. Beyond that the model is terrain and route, and sea comes from the elevation data. The upper limit is 200 km.
+- **Large areas.** Races and multi-day hikes often cover 10–100 km. Forest, glaciers and mapped rock come from OpenStreetMap up to 60 km; slope-based rock and altitude-based snow work at any size. Buildings and roads are only fetched up to 8 km, and water and parks up to 60 km. Beyond that the model is terrain and route, and sea comes from the elevation data. The upper limit is 200 km.
 
 Shapes, the groove, the insert and the base are built with [Manifold](https://github.com/elalish/manifold), loaded as WebAssembly only when needed, so every boolean result is guaranteed manifold. Labels use Barlow Condensed glyph outlines via opentype.js.
 

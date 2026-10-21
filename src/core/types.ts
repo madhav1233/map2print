@@ -23,9 +23,21 @@ export interface Dem {
   data: Float32Array; // metres
 }
 
-export type PartId = 'terrain' | 'buildings' | 'roads' | 'water' | 'parks' | 'marker' | 'route' | 'base' | 'labels';
+export type PartId =
+  | 'terrain'
+  | 'buildings'
+  | 'roads'
+  | 'water'
+  | 'parks'
+  | 'forest'
+  | 'rock'
+  | 'snow'
+  | 'marker'
+  | 'route'
+  | 'base'
+  | 'labels';
 
-export const PART_ORDER: PartId[] = ['terrain', 'buildings', 'roads', 'water', 'parks', 'marker', 'route', 'base', 'labels'];
+export const PART_ORDER: PartId[] = ['terrain', 'buildings', 'roads', 'water', 'parks', 'forest', 'rock', 'snow', 'marker', 'route', 'base', 'labels'];
 
 export type Shape = 'rectangle' | 'octagon' | 'hexagon' | 'circle';
 export type RouteStyle = 'raised' | 'insert';
@@ -45,11 +57,18 @@ export interface Settings {
     paths: boolean;
     water: boolean;
     parks: boolean;
+    forest: boolean;
+    rock: boolean;
+    snow: boolean;
     marker: boolean;
     route: boolean;
     base: boolean;
     labels: boolean;
   };
+  /** Rock: ground steeper than this (degrees, real-world slope) plus mapped bare rock and scree. */
+  rock: { slopeDeg: number };
+  /** Snow: ground above this altitude (metres; null = automatic) plus mapped glaciers. */
+  snow: { altitudeM: number | null };
   /** Footprint of the model. Non-rectangular shapes are inscribed in the selection. */
   shape: Shape;
   route: {
@@ -96,21 +115,29 @@ export const DEFAULT_SETTINGS: Settings = {
     paths: false,
     water: true,
     parks: true,
+    forest: true,
+    rock: false,
+    snow: false,
     marker: false,
     route: true,
     base: false,
     labels: false,
   },
+  rock: { slopeDeg: 35 },
+  snow: { altitudeM: null },
   shape: 'rectangle',
   route: { style: 'raised', widthMm: 1.2, raiseMm: 1.2, clearanceMm: 0.15 },
   base: { plateMm: 3, rimMm: 12, title: '', left: '', right: '' },
-  slots: { terrain: 1, buildings: 2, roads: 3, water: 4, parks: 5, marker: 6, route: 7, base: 8, labels: 9 },
+  slots: { terrain: 1, buildings: 2, roads: 3, water: 4, parks: 5, forest: 6, rock: 7, snow: 8, marker: 9, route: 10, base: 11, labels: 12 },
   colors: {
     terrain: '#e9e4d8',
     buildings: '#f7f6f2',
     roads: '#5b5f66',
     water: '#4a86b8',
     parks: '#7aa35a',
+    forest: '#3f5c2e',
+    rock: '#8b8780',
+    snow: '#f6f7f5',
     marker: '#d23a3a',
     route: '#d8322b',
     base: '#2b2f33',
@@ -170,6 +197,11 @@ export interface Report {
   waterBodies: number;
   waterAreaPct: number;
   parkAreaPct: number;
+  forestAreaPct: number;
+  rockAreaPct: number;
+  snowAreaPct: number;
+  /** Snow line actually used (metres) and its height on the print (mm above the bed). */
+  snowLine: null | { altitudeM: number; zMm: number; auto: boolean; glaciers: boolean };
   realSizeM: [number, number];
   demZoom: number;
   warnings: string[];

@@ -204,7 +204,13 @@ export function levelWater(
       cells.push(c);
       const i = c % nx;
       const j = (c - i) / nx;
-      const nb = [i > 0 ? c - 1 : -1, i < nx - 1 ? c + 1 : -1, j > 0 ? c - nx : -1, j < ny - 1 ? c + nx : -1];
+      // 8-connected: cells touching only at a corner (thin diagonal creeks) are one body
+      const nb: number[] = [];
+      for (let dj = -1; dj <= 1; dj++) {
+        for (let di = -1; di <= 1; di++) {
+          if ((di || dj) && i + di >= 0 && i + di < nx && j + dj >= 0 && j + dj < ny) nb.push(c + dj * nx + di);
+        }
+      }
       for (const n of nb) {
         if (n >= 0 && water[n] && comp[n] < 0) {
           comp[n] = id;

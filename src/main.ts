@@ -21,6 +21,9 @@ const LAYER_NAMES: Record<PartId, string> = {
   roads: 'Roads',
   water: 'Water',
   parks: 'Parks & green space',
+  forest: 'Forest',
+  rock: 'Rock',
+  snow: 'Snow caps',
   marker: 'Heart marker',
   route: 'Route',
   base: 'Base',
@@ -64,6 +67,8 @@ if (saved.settings) {
   settings.route = { ...DEFAULT_SETTINGS.route, ...saved.settings.route };
   settings.base = { ...DEFAULT_SETTINGS.base, ...saved.settings.base };
   settings.shape = saved.settings.shape ?? DEFAULT_SETTINGS.shape;
+  settings.rock = { ...DEFAULT_SETTINGS.rock, ...saved.settings.rock };
+  settings.snow = { ...DEFAULT_SETTINGS.snow, ...saved.settings.snow };
 }
 let placeName = saved.place ?? 'Lower Manhattan';
 let marker: LonLat | null = saved.marker ?? null;
@@ -94,6 +99,8 @@ const labelsOnEl = $<HTMLInputElement>('labels-on');
 const labelTitleEl = $<HTMLInputElement>('label-title');
 const labelLeftEl = $<HTMLInputElement>('label-left');
 const labelRightEl = $<HTMLInputElement>('label-right');
+const rockSlopeEl = $<HTMLInputElement>('rock-slope');
+const snowAltEl = $<HTMLInputElement>('snow-alt');
 
 sizeEl.value = String(settings.sizeMm);
 baseEl.value = String(settings.baseMm);
@@ -114,6 +121,8 @@ labelsOnEl.checked = settings.include.labels;
 labelTitleEl.value = settings.base.title;
 labelLeftEl.value = settings.base.left;
 labelRightEl.value = settings.base.right;
+rockSlopeEl.value = String(settings.rock.slopeDeg);
+snowAltEl.value = settings.snow.altitudeM === null ? '' : String(settings.snow.altitudeM);
 
 const legend = $('legend');
 for (const id of PART_ORDER) {
@@ -127,7 +136,7 @@ for (const id of PART_ORDER) {
   li.innerHTML = `
     <span class="swatch"><input type="color" aria-label="${LAYER_NAMES[id]} colour" data-color="${id}" value="${settings.colors[id]}"></span>
     ${toggle}
-    <select data-slot="${id}" aria-label="${LAYER_NAMES[id]} filament slot">${Array.from({ length: 8 }, (_, k) => `<option value="${k + 1}" ${settings.slots[id] === k + 1 ? 'selected' : ''}>${k + 1}</option>`).join('')}</select>`;
+    <select data-slot="${id}" aria-label="${LAYER_NAMES[id]} filament slot">${Array.from({ length: 16 }, (_, k) => `<option value="${k + 1}" ${settings.slots[id] === k + 1 ? 'selected' : ''}>${k + 1}</option>`).join('')}</select>`;
   legend.appendChild(li);
 }
 
@@ -154,6 +163,9 @@ function readSettings(): Settings {
     s.colors[el.dataset.color as PartId] = el.value;
   });
   s.shape = shapeEl.value as Shape;
+  s.rock = { slopeDeg: num(rockSlopeEl, 10, 80, 35) };
+  const alt = parseFloat(snowAltEl.value);
+  s.snow = { altitudeM: snowAltEl.value.trim() === '' || !isFinite(alt) ? null : alt };
   s.route = {
     style: routeStyleEl.value === 'insert' ? 'insert' : 'raised',
     widthMm: num(routeWidthEl, 0.6, 4, 1.2),
@@ -185,6 +197,9 @@ function syncLegend(): void {
     if (id in show) li.hidden = !show[id];
   });
   $('base-options').hidden = !baseOnEl.checked;
+  const on = (id: string) => legend.querySelector<HTMLInputElement>(`input[data-layer="${id}"]`)?.checked ?? false;
+  $('rock-option').hidden = !on('rock');
+  $('snow-option').hidden = !on('snow');
   $('clearance-field').hidden = routeStyleEl.value !== 'insert';
 }
 
@@ -260,6 +275,7 @@ legend.addEventListener('change', (e) => {
   const t = e.target as HTMLElement;
   if (t instanceof HTMLInputElement && t.dataset.layer) {
     t.closest('label')!.classList.toggle('is-off', !t.checked);
+    syncLegend();
     if (t.dataset.layer === 'marker') syncMarker();
     markStale();
   }
@@ -271,7 +287,7 @@ legend.addEventListener('input', (e) => {
 });
 for (const el of [
   sizeEl, baseEl, exagEl, bscaleEl, detailEl, pathsEl, routeStyleEl, routeWidthEl, routeRaiseEl, routeClearEl,
-  baseOnEl, plateEl, rimEl, labelsOnEl, labelTitleEl, labelLeftEl, labelRightEl,
+  baseOnEl, plateEl, rimEl, labelsOnEl, labelTitleEl, labelLeftEl, labelRightEl, rockSlopeEl, snowAltEl,
 ]) {
   el.addEventListener('change', () => {
     syncLegend();
@@ -368,9 +384,12 @@ function applyKeepsakePreset(): void {
   set('route', null, 3, '#d8322b');
   set('base', null, 4, '#2b2f33');
   set('labels', null, 5, '#f4f4f0');
-  set('parks', false, 6, settings.colors.parks);
-  set('buildings', false, 6, settings.colors.buildings);
-  set('roads', false, 6, settings.colors.roads);
+  set('forest', true, 6, '#3f5c2e');
+  set('rock', null, 7, '#8b8780');
+  set('snow', null, 5, '#f4f4f0'); // same white filament as the labels
+  set('parks', false, 8, settings.colors.parks);
+  set('buildings', false, 8, settings.colors.buildings);
+  set('roads', false, 8, settings.colors.roads);
   $('route-preset-note').hidden = false;
 }
 
@@ -653,11 +672,25 @@ function showResult(parts: PartResult[], r: Report): void {
       `${fmt(r.buildings)} buildings extruded and embedded into the terrain (min height ${r.minBuildingMm} mm, ${fmt(r.buildingsDropped)} unprintably small footprints dropped)`,
     ]);
   if (has('roads')) checks.push(['ok', `${fmt(r.roadSegments)} road segments raised onto the terrain`]);
-  if (has('water') || has('parks')) {
+  if (has('water') || has('parks') || has('forest')) {
     const bits = [];
     if (has('water')) bits.push(`${r.waterBodies} water ${r.waterBodies === 1 ? 'body' : 'bodies'} levelled and tinted (${r.waterAreaPct.toFixed(0)}% of the area)`);
     if (has('parks')) bits.push(`parks and green space tinted (${r.parkAreaPct.toFixed(0)}%)`);
+    if (has('forest')) bits.push(`forest in its own colour (${r.forestAreaPct.toFixed(0)}%)`);
     checks.push(['ok', `Land cover from OpenStreetMap: ${bits.join('; ')}`]);
+  }
+  if (has('rock')) checks.push(['ok', `Rock on slopes over ${readSettings().rock.slopeDeg}° and mapped bare rock or scree (${r.rockAreaPct.toFixed(0)}% of the area)`]);
+  else if (readSettings().include.rock)
+    checks.push(['warn', `No ground is steeper than ${readSettings().rock.slopeDeg}° and no bare rock is mapped here, so there is no rock. Lower the slope to find more.`]);
+  if (r.snowLine) {
+    const alt = Math.round(r.snowLine.altitudeM).toLocaleString('en-US');
+    const glaciers = r.snowLine.glaciers ? ' plus mapped glaciers' : '';
+    checks.push([
+      'ok',
+      `Snow above ${alt} m${r.snowLine.auto ? ' (automatic: the top 15% of the relief)' : ''}${glaciers}, ${r.snowAreaPct.toFixed(0)}% of the area. Single-colour printer? A filament change to white at ${r.snowLine.zMm.toFixed(1)} mm gives the same snow line.`,
+    ]);
+  } else if (readSettings().include.snow) {
+    checks.push(['warn', 'No ground reaches the snow line, so there are no snow caps. Lower the altitude or leave it blank for automatic.']);
   }
   const slots = new Set(parts.map((p) => readSettings().slots[p.id]));
   checks.push(['ok', `Multi-colour 3MF available: ${parts.length} parts on ${slots.size} filament slots`]);

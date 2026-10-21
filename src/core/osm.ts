@@ -60,8 +60,27 @@ export interface Features {
   /** Coastline chains (land on the left), projected. `closed` if the chain is a ring. */
   coastlines: { pts: Pt[]; closed: boolean }[];
   parks: RingSet[];
-  /** Park / green relations too large to resolve locally (skipped). */
-  partialParksSkipped: number;
+  forests: RingSet[];
+  rocks: RingSet[];
+  glaciers: RingSet[];
+  /** Land-cover relations (parks, forests, rock, glaciers) too large to resolve locally (skipped). */
+  partialLandSkipped: number;
+}
+
+export function emptyFeatures(): Features {
+  return {
+    buildings: [],
+    roads: [],
+    waterAreas: [],
+    waterPartials: [],
+    waterLines: [],
+    coastlines: [],
+    parks: [],
+    forests: [],
+    rocks: [],
+    glaciers: [],
+    partialLandSkipped: 0,
+  };
 }
 
 const ROAD_WIDTHS: Record<string, number> = {
@@ -96,7 +115,6 @@ const PATH_KINDS = new Set(['footway', 'path', 'cycleway', 'bridleway', 'steps',
 const PARK_LEISURE = new Set(['park', 'garden', 'golf_course', 'nature_reserve', 'pitch', 'common', 'dog_park']);
 const PARK_LANDUSE = new Set([
   'grass',
-  'forest',
   'meadow',
   'recreation_ground',
   'cemetery',
@@ -105,7 +123,18 @@ const PARK_LANDUSE = new Set([
   'orchard',
   'vineyard',
 ]);
-const PARK_NATURAL = new Set(['wood', 'scrub', 'grassland', 'heath']);
+const PARK_NATURAL = new Set(['scrub', 'grassland', 'heath']);
+const ROCK_NATURAL = new Set(['bare_rock', 'scree', 'shingle']);
+
+/** Land-cover class of an area, most specific first. */
+export type LandClass = 'forest' | 'rock' | 'glacier' | 'park';
+export function landClass(t: Record<string, string>): LandClass | null {
+  if (t.natural === 'glacier') return 'glacier';
+  if (t.natural !== undefined && ROCK_NATURAL.has(t.natural)) return 'rock';
+  if (t.landuse === 'forest' || t.natural === 'wood') return 'forest';
+  if (isPark(t)) return 'park';
+  return null;
+}
 
 export function parseLength(v: string | undefined): number | undefined {
   if (!v) return undefined;
@@ -270,16 +299,9 @@ function isPark(t: Record<string, string>): boolean {
 
 export function parseOsm(json: OsmJson, proj: Projector, opts: { includePaths: boolean }): Features {
   const P = (g: GeomPt[]): Pt[] => g.map((p) => proj.toModel(p.lon, p.lat));
-  const f: Features = {
-    buildings: [],
-    roads: [],
-    waterAreas: [],
-    waterPartials: [],
-    waterLines: [],
-    coastlines: [],
-    parks: [],
-    partialParksSkipped: 0,
-  };
+  const f = emptyFeatures();
+  const landList = (c: LandClass): RingSet[] =>
+    c === 'forest' ? f.forests : c === 'rock' ? f.rocks : c === 'glacier' ? f.glaciers : f.parks;
   const coast: { nodes: number[]; geom: GeomPt[] }[] = [];
   // Relations may arrive without member geometry (`out body`) next to their
   // member ways (`out geom`), so index every way's geometry by id first.
@@ -320,15 +342,14 @@ export function parseOsm(json: OsmJson, proj: Projector, opts: { includePaths: b
         f.waterLines.push({ pts: P(g), widthM: w });
         continue;
       }
-      if (isPark(t) && closed && g.length >= 4) {
-        f.parks.push([P(g)]);
-      }
+      const lc = landClass(t);
+      if (lc && closed && g.length >= 4) landList(lc).push([P(g)]);
     } else if (el.type === 'relation' && el.members) {
       if (t.type !== 'multipolygon') continue;
       const water = isWaterArea(t);
       const building = !!t.building && t.building !== 'no';
-      const park = isPark(t);
-      if (!water && !building && !park) continue;
+      const land = water || building ? null : landClass(t);
+      if (!water && !building && !land) continue;
       const outerWays: GeomPt[][] = [];
       const innerWays: GeomPt[][] = [];
       let missing = 0;
@@ -344,7 +365,7 @@ export function parseOsm(json: OsmJson, proj: Projector, opts: { includePaths: b
       if (missing > 0 && !building) {
         // Only the members touching the window were delivered.
         if (water && outerWays.length + innerWays.length) f.waterPartials.push([...outerWays, ...innerWays].map(P));
-        else if (park) f.partialParksSkipped++;
+        else if (land) f.partialLandSkipped++;
         continue;
       }
       const outers = assembleRings(outerWays).map(P);
@@ -355,8 +376,8 @@ export function parseOsm(json: OsmJson, proj: Projector, opts: { includePaths: b
         f.buildings.push({ id: el.id, outers, inners, heightM: h.height, hasHeightTag: h.tagged });
       } else if (water) {
         f.waterAreas.push([...outers, ...inners]);
-      } else if (park) {
-        f.parks.push([...outers, ...inners]);
+      } else if (land) {
+        landList(land).push([...outers, ...inners]);
       }
     }
   }

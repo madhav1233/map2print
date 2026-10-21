@@ -143,7 +143,7 @@ describe('full pipeline on the synthetic city', () => {
 
   it('produces every part and a sane report', () => {
     const ids = result.parts.map((p) => p.id).sort();
-    expect(ids).toEqual(['buildings', 'marker', 'parks', 'roads', 'terrain', 'water']);
+    expect(ids).toEqual(['buildings', 'forest', 'marker', 'parks', 'roads', 'terrain', 'water']);
     const r = result.report;
     expect(r.shellsFailed).toBe(0);
     expect(r.terrainWatertight).toBe(true);
@@ -204,5 +204,58 @@ describe('full pipeline on the synthetic city', () => {
     expect(tri).toBe(result.parts.reduce((n, p) => n + p.indices.length / 3, 0));
     for (const p of result.parts) expect(cfg).toContain(`<metadata key="extruder" value="${p.slot}"/>`);
     expect(cfg).toContain('subtype="normal_part"');
+  });
+});
+
+describe('forest, rock and snow layers', () => {
+  const run = (over: Partial<Settings>) =>
+    generateModel({ bbox: FIXTURE_BBOX, dem: syntheticDem(), osm: syntheticOsm(), settings: { ...DEFAULT_SETTINGS, cellMm: 0.8, ...over } });
+
+  it('forests are their own layer, separate from parks', () => {
+    const r = run({});
+    expect(r.parts.some((p) => p.id === 'forest')).toBe(true);
+    expect(r.parts.some((p) => p.id === 'parks')).toBe(true);
+    expect(r.report.forestAreaPct).toBeGreaterThan(0.5);
+    // turning forest off leaves it untinted rather than folding it into parks
+    const off = run({ include: { ...DEFAULT_SETTINGS.include, forest: false } });
+    expect(off.parts.some((p) => p.id === 'forest')).toBe(false);
+    expect(off.report.parkAreaPct).toBeCloseTo(r.report.parkAreaPct, 5);
+  });
+
+  it('snow above an automatic snow line plus glaciers, rock from slope and mapped rock', () => {
+    const r = run({ include: { ...DEFAULT_SETTINGS.include, buildings: false, roads: false, rock: true, snow: true } });
+    const ids = r.parts.map((p) => p.id);
+    expect(ids).toEqual(expect.arrayContaining(['snow', 'rock', 'forest', 'water']));
+    for (const p of r.parts) {
+      const a = analyzeShell(p);
+      expect(a.watertight, p.id).toBe(true);
+      expect(a.volume, p.id).toBeGreaterThan(0);
+    }
+    const sl = r.report.snowLine!;
+    expect(sl.auto).toBe(true);
+    expect(sl.glaciers).toBe(true);
+    // snow line in the top part of the relief, and its print height is on the terrain
+    expect(sl.altitudeM).toBeGreaterThan(20);
+    const t = r.parts.find((p) => p.id === 'terrain')!;
+    let zLo = Infinity;
+    let zHi = -Infinity;
+    for (let i = 2; i < t.positions.length; i += 3) {
+      zLo = Math.min(zLo, t.positions[i]);
+      zHi = Math.max(zHi, t.positions[i]);
+    }
+    expect(sl.zMm).toBeGreaterThan(DEFAULT_SETTINGS.baseMm);
+    expect(sl.zMm).toBeLessThan(zHi);
+    expect(r.report.snowAreaPct).toBeGreaterThan(1);
+    expect(r.report.rockAreaPct).toBeGreaterThan(0.2); // the mapped bare rock at least
+    // a gentler slope threshold finds more rock
+    const steep = run({ include: { ...DEFAULT_SETTINGS.include, rock: true }, rock: { slopeDeg: 2 } });
+    expect(steep.report.rockAreaPct).toBeGreaterThan(r.report.rockAreaPct);
+  });
+
+  it('a snow line above every peak gives no snow caps', () => {
+    const r = run({ include: { ...DEFAULT_SETTINGS.include, snow: true }, snow: { altitudeM: 5000 } });
+    // only the mapped glacier remains
+    expect(r.report.snowLine?.altitudeM ?? 5000).toBe(5000);
+    expect(r.report.snowAreaPct).toBeLessThan(1);
   });
 });

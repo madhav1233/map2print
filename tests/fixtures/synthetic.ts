@@ -152,6 +152,13 @@ export function syntheticOsm(b: BBox = FIXTURE_BBOX): OsmJson {
   // only at their corners, the case real coastlines and creeks produce.
   els.push(way({ waterway: 'canal', width: '2' }, [node(X(0.03), Y(0.62)), node(X(0.33), Y(0.95))]));
 
+  // forest, a wood, bare rock and a (very low-altitude) glacier
+  els.push(closedWay({ landuse: 'forest' }, rect(X(0.74), Y(0.08), X(0.84), Y(0.19))));
+  els.push(closedWay({ natural: 'wood' }, rect(X(0.36), Y(0.62), X(0.42), Y(0.7))));
+  els.push(closedWay({ natural: 'bare_rock' }, rect(X(0.25), Y(0.08), X(0.32), Y(0.14))));
+  els.push(closedWay({ natural: 'scree' }, rect(X(0.52), Y(0.47), X(0.58), Y(0.52))));
+  els.push(closedWay({ natural: 'glacier' }, rect(X(0.46), Y(0.8), X(0.52), Y(0.86))));
+
   // lake and park
   els.push(closedWay({ natural: 'water', water: 'lake' }, [node(X(0.08), Y(0.05)), node(X(0.2), Y(0.04)), node(X(0.22), Y(0.13)), node(X(0.1), Y(0.15))]));
   els.push(closedWay({ leisure: 'park', name: 'Test Park' }, rect(X(0.02), Y(0.88), X(0.25), Y(0.99))));

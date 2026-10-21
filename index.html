@@ -155,6 +155,16 @@
         <section class="block" aria-labelledby="h-layers">
           <h2 id="h-layers">Layers <span class="aside">filament slot</span></h2>
           <ul class="legend" id="legend"></ul>
+          <div class="fields layer-options">
+            <label class="field" id="rock-option" hidden>
+              <span>Rock on slopes over</span>
+              <span class="input-unit"><input type="number" id="rock-slope" min="10" max="80" step="1" value="35" /><em>degrees</em></span>
+            </label>
+            <label class="field" id="snow-option" hidden>
+              <span>Snow above</span>
+              <span class="input-unit"><input type="number" id="snow-alt" min="-100" max="9000" step="50" placeholder="auto" /><em>m</em></span>
+            </label>
+          </div>
           <label class="check sub"><input type="checkbox" id="paths" /> Include footpaths and cycleways</label>
         </section>
 
